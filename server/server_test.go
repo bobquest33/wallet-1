@@ -32,10 +32,13 @@ import (
 	"testing"
 	"time"
 
+	"log"
+
 	"github.com/monarj/wallet/node/manager"
 )
 
 func TestServer(t *testing.T) {
+	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
 	l, ch, err := Start()
 	if err != nil {
 		t.Fatal(err)

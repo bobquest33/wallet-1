@@ -33,7 +33,6 @@ import (
 	"log"
 	"net"
 
-	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/node"
 	"github.com/monarj/wallet/params"
 )
@@ -78,21 +77,4 @@ func handle(conn *net.TCPConn) {
 		log.Println(err)
 		n.Close()
 	}
-}
-
-func parse(conn net.Conn) error {
-	cmd, payload, err := msg.ReadMessage(conn)
-	if err != nil {
-		return err
-	}
-	log.Println(cmd)
-	switch cmd {
-	case "version":
-		ver, err := msg.NewVersion(payload)
-		if err != nil {
-			return err
-		}
-		log.Println(ver)
-	}
-	return nil
 }

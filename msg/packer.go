@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"reflect"
 	"strconv"
 )
@@ -151,8 +152,7 @@ func Unpack(buf io.Reader, t interface{}) error {
 			vals[i] = uint64(dat)
 		case byte:
 			bs := make([]byte, 1)
-			_, err := buf.Read(bs)
-			if err != nil {
+			if _, err := buf.Read(bs); err != nil {
 				return err
 			}
 			result = bs[0]
@@ -179,6 +179,7 @@ func Unpack(buf io.Reader, t interface{}) error {
 				return err
 			}
 			if _, err = buf.Read(dat); err != nil {
+				log.Println(i, err)
 				return err
 			}
 			result = dat

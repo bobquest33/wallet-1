@@ -30,14 +30,8 @@ package msg
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"errors"
-	"io"
-	"log"
-	"math/rand"
-	"time"
-
-	"github.com/monarj/wallet/params"
+	"fmt"
+	"net"
 )
 
 //Message is the header of message.
@@ -49,43 +43,9 @@ type Message struct {
 	Payload  []byte `loc_of_len:"2"`
 }
 
-//ReadMessage read a message packet from buf and returns
-//cmd and payload.
-func ReadMessage(buf io.Reader) (string, *bytes.Buffer, error) {
-	var message Message
-	if err := Unpack(buf, &message); err != nil {
-		return "", nil, err
-	}
-	h := sha256.Sum256(message.Payload)
-	h = sha256.Sum256(h[:])
-	if !bytes.Equal(message.CheckSum, h[:4]) {
-		return "", nil, errors.New("checksum unmatch")
-	}
-	if !bytes.Equal(message.Magic, params.PacketMagic) {
-		return "", nil, errors.New("magic unmatch")
-	}
-	str := bytes.TrimRight(message.Command, string([]byte{0}))
-	return string(str), bytes.NewBuffer(message.Payload), nil
-}
-
-//WriteMessage writes payload in message packet.
-func WriteMessage(conn io.Writer, cmd string, payload interface{}) error {
-	var buf bytes.Buffer
-	if err := Pack(&buf, payload); err != nil {
-		return err
-	}
-	dat := buf.Bytes()
-	h := sha256.Sum256(dat)
-	h = sha256.Sum256(h[:])
-	log.Println(h[:4])
-	message := Message{
-		params.PacketMagic,
-		[]byte(cmd),
-		uint32(len(dat)),
-		h[:4],
-		dat,
-	}
-	return Pack(conn, message)
+//GetCommand converts Command field to string.
+func (m *Message) GetCommand() string {
+	return string(bytes.TrimRight(m.Command, "\x00"))
 }
 
 //InvVec are used for notifying other nodes about objects
@@ -119,36 +79,6 @@ type Version struct {
 	Relay       byte
 }
 
-//NewVersion makes and returs version struct from payload with checking it.
-func NewVersion(payload io.Reader) (*Version, error) {
-	version := Version{}
-	if err := Unpack(payload, &version); err != nil {
-		return nil, err
-	}
-	if version.Version < params.ProtocolVersion {
-		return nil, errors.New("Version is old")
-	}
-	return &version, nil
-}
-
-//WriteVersion createsand send a verson packet.
-func WriteVersion(buf io.Writer) error {
-	nonce := uint64(rand.Int63())
-
-	ver := Version{
-		params.ProtocolVersion,
-		0, // NODE_NETWORK
-		uint64(time.Now().Unix()),
-		NetAddr{},
-		NetAddr{},
-		nonce,
-		params.UserAgent,
-		0,
-		0,
-	}
-	return WriteMessage(buf, "version", ver)
-}
-
 //Inv allows a node to advertise its knowledge of one or more objects
 type Inv struct {
 	Count     VarInt
@@ -168,7 +98,7 @@ type Hash struct {
 	Hash []byte `len:"32"`
 }
 
-//Getblocks Return an inv packet containing the list of blocks
+//Getblocks returns an inv packet containing the list of blocks
 //starting right after the last known hash in the block locator object,
 //up to hash_stop or 500 blocks, whichever comes first.
 type Getblocks struct {
@@ -226,21 +156,38 @@ type Tx struct {
 //Addr provides information on known nodes of the network
 type Addr struct {
 	Count VarInt
-	Dummy []NetAddrTime `loc_of_len:"0"`
+	Addr  []NetAddrTime `loc_of_len:"0"`
 }
 
 //NetAddr represents network addres. for now it's just a dummy.
 type NetAddr struct {
-	Dummy []byte `len:"26"`
+	Service uint64
+	IPv6    []byte `len:"16"`
+	Port    uint16
+}
+
+//TCPAddr converts net.TCPAddr struct
+func (a *NetAddr) TCPAddr() (*net.TCPAddr, error) {
+	str := fmt.Sprintf("%s:%d", net.IP(a.IPv6).String(), a.Port)
+	return net.ResolveTCPAddr("tcp", str)
+}
+
+//NewNetAddr returns NetAddr struct.
+func NewNetAddr(a *net.TCPAddr, s uint64) *NetAddr {
+	return &NetAddr{
+		Service: s,
+		IPv6:    []byte(a.IP),
+		Port:    uint16(a.Port),
+	}
 }
 
 //NetAddrTime is NetAddr with time.
 type NetAddrTime struct {
-	Time  uint32
-	Dummy []byte `len:"26"`
+	Time uint32
+	Addr NetAddr
 }
 
-//BlockHeaders are sent in a headers packet in response to a getheaders message.
+//Merkleblock represents a filtered block.
 type Merkleblock struct {
 	Version   uint32
 	Prev      []byte `len:"32"`
