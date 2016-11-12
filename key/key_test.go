@@ -26,22 +26,79 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package params
+package key
 
-const (
-	//Version is the version of this program.
-	Version = "0.0.0"
-	//ProtocolVersion is the version which this program supports.
-	ProtocolVersion uint32 = 70003
-	//MainNet represents mainnet.
-	MainNet = "main"
-	//TestNet represents testnet.
-	TestNet = "test"
-	//SwitchLYRA2 is the block from which number LYRA2 protocol begins.
-	SwitchLYRA2 = 450000
-	//UserAgent is the user agent.
-	UserAgent = "/monarj:" + Version + "/"
-	//	UserAgent = "/Satoshi:10.0.4/"
-	//Nconfirmed is the block height block is regarded as confirmed.
-	Nconfirmed = 5
+import (
+	"log"
+	"testing"
+
+	"github.com/monarj/wallet/btcec"
+
+	"encoding/hex"
 )
+
+func TestKeys2(t *testing.T) {
+	key, err := GenerateKey(true)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+	adr, _ := key.Pub.GetAddress()
+	log.Println("address=", adr)
+	wif := key.Priv.GetWIFAddress()
+	log.Println("wif=", wif)
+
+	key2, err := GetKeyFromWIF(wif)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+	adr2, _ := key2.Pub.GetAddress()
+	log.Println("address2=", adr2)
+
+	if adr != adr2 {
+		t.Errorf("key unmatched")
+	}
+}
+
+func TestKeys(t *testing.T) {
+	key, err := GenerateKey(false)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+	adr, _ := key.Pub.GetAddress()
+	log.Println("address=", adr)
+	wif := key.Priv.GetWIFAddress()
+	log.Println("wif=", wif)
+
+	key2, err := GetKeyFromWIF(wif)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+	adr2, _ := key2.Pub.GetAddress()
+	log.Println("address2=", adr2)
+
+	if adr != adr2 {
+		t.Errorf("key unmatched")
+	}
+
+}
+
+func TestKeys3(t *testing.T) {
+	private := PrivateKey{}
+	public := PublicKey{}
+	seed := make([]byte, 32)
+	_, err := hex.Decode(seed, []byte("3954e0c9a3ce58a8dca793e214232e569ff0cb9da79689ca56d0af614227d540"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s256 := btcec.S256()
+	private.key, public.key = btcec.PrivKeyFromBytes(s256, seed)
+	wif := private.GetWIFAddress()
+	if wif != "6ySkrpLpwm6gKsWo2aS6EL1SZxidZNdJkKqsKRNjXzv9WSrpHjR" {
+		t.Errorf("wif not match")
+	}
+	adr, _ := public.GetAddress()
+	if adr != "MB3D45ngvaWRcACUmAFUf6fzcdXR8bVM6k" {
+		t.Errorf("address not match")
+	}
+	log.Println(adr, wif)
+}

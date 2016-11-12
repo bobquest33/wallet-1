@@ -26,22 +26,46 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package params
+package key
 
-const (
-	//Version is the version of this program.
-	Version = "0.0.0"
-	//ProtocolVersion is the version which this program supports.
-	ProtocolVersion uint32 = 70003
-	//MainNet represents mainnet.
-	MainNet = "main"
-	//TestNet represents testnet.
-	TestNet = "test"
-	//SwitchLYRA2 is the block from which number LYRA2 protocol begins.
-	SwitchLYRA2 = 450000
-	//UserAgent is the user agent.
-	UserAgent = "/monarj:" + Version + "/"
-	//	UserAgent = "/Satoshi:10.0.4/"
-	//Nconfirmed is the block height block is regarded as confirmed.
-	Nconfirmed = 5
+import (
+	"sync"
 )
+
+var (
+	//list is a keylist.
+	list []*Key
+
+	mutex sync.RWMutex
+)
+
+//Add adds key to key list.
+func Add(k *Key) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	list = append(list, k)
+}
+
+//Get gets key list.
+func Get() []*Key {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	l := make([]*Key, len(list))
+	copy(l, list)
+	return l
+}
+
+//Remove removes the key from key list.
+func Remove(k *Key) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	for i, kl := range list {
+		s1, _ := k.Pub.GetAddress()
+		s2, _ := kl.Pub.GetAddress()
+		if s1 == s2 {
+			list = append(list[:i], list[i+1:]...)
+			list[len(list)-1] = nil
+			return
+		}
+	}
+}

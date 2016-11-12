@@ -33,6 +33,7 @@ import (
 	"log"
 	"net"
 
+	"fmt"
 	"time"
 )
 
@@ -46,6 +47,7 @@ type Node struct {
 	Closed    bool
 	timeout   int
 	LastBlock uint32
+	lastPing  uint64
 }
 
 //Close closes conn.
@@ -95,45 +97,45 @@ func (n *Node) errClose(err error) error {
 	return err
 }
 
-func (n *Node) errHandle(err error) (uint64, error) {
+func (n *Node) errHandle(err error) error {
 	if err != nil {
 		op, ok := err.(*net.OpError)
 		if ok && op.Timeout() {
 			if n.timeout++; n.timeout > timeout {
-				err = errors.New("timeout")
-				return 0, n.errClose(err)
+				return errors.New("timeout")
 			}
-			pnonce, err := n.writePing()
-			if err != nil {
-				return 0, n.errClose(err)
+			if err = n.writePing(); err != nil {
+				return err
 			}
-			return pnonce, nil
+			return nil
 		}
 	}
-	return 0, nil
+	return err
 }
 
 //Loop starts node lifecyle.
 func (n *Node) Loop() error {
-	var pnonce uint64
 	for {
 		cmd, payload, err := n.readMessage()
-		pnonce, err = n.errHandle(err)
-		if err != nil {
-			return nil
+		if err = n.errHandle(err); err != nil {
+			return n.errClose(err)
 		}
-		log.Println(cmd)
+		log.Println(cmd + " from " + n.conn.RemoteAddr().String())
 		switch cmd {
 		case "ping":
 			if err = n.pongAfterReadPing(payload); err != nil {
 				return n.errClose(err)
 			}
 		case "pong":
-			if err = n.readPong(payload, pnonce); err != nil {
+			if err = n.readPong(payload); err != nil {
+				return n.errClose(err)
+			}
+		case "inv":
+			if err = n.readInv(payload); err != nil {
 				return n.errClose(err)
 			}
 		default:
-			err = errors.New("unknown command")
+			err = fmt.Errorf("%s:unknown command", cmd)
 			log.Println(err)
 		}
 		if err := n.setDeadline(); err != nil {
@@ -172,27 +174,12 @@ func (n *Node) Handshake() error {
 	if cmd != "version" {
 		return errors.New("not version packcket from " + n.String())
 	}
-	v, err := n.parseVersion(payload)
+	_, err = n.parseVersion(payload)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
-	log.Println("recv from ", n.String())
-	r, err := v.AddrRecv.TCPAddr()
-	if err != nil {
-		log.Println(err)
-	}
-	f, err := v.AddrFrom.TCPAddr()
-	if err != nil {
-		log.Println(err)
-	}
-	log.Println(v, r, f)
-
-	if err = n.writeMessage("verack", struct{}{}); err != nil {
-		log.Println(err)
-		return err
-	}
-	log.Println("sended verack")
+	log.Println("recv version from ", n.String())
 
 	cmd, _, err = n.readMessage()
 	if err != nil {
@@ -204,5 +191,31 @@ func (n *Node) Handshake() error {
 	}
 	log.Println("received verack")
 
+	if err = n.writeMessage("verack", struct{}{}); err != nil {
+		log.Println(err)
+		return err
+	}
+	log.Println("sended verack")
+
+	if err = n.writePing(); err != nil {
+		return n.errClose(err)
+	}
+
+	if err = n.writeFilterload(); err != nil {
+		log.Println(err)
+		return err
+	}
+
+	if err = n.writeMessage("mempool", struct{}{}); err != nil {
+		log.Println(err)
+		return err
+	}
+	log.Println("sended mempool")
+	/*
+		if err = n.writeGetblocks(); err != nil {
+			log.Println(err)
+			return err
+		}
+	*/
 	return nil
 }

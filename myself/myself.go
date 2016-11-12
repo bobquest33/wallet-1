@@ -26,22 +26,50 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package params
+package myself
 
-const (
-	//Version is the version of this program.
-	Version = "0.0.0"
-	//ProtocolVersion is the version which this program supports.
-	ProtocolVersion uint32 = 70003
-	//MainNet represents mainnet.
-	MainNet = "main"
-	//TestNet represents testnet.
-	TestNet = "test"
-	//SwitchLYRA2 is the block from which number LYRA2 protocol begins.
-	SwitchLYRA2 = 450000
-	//UserAgent is the user agent.
-	UserAgent = "/monarj:" + Version + "/"
-	//	UserAgent = "/Satoshi:10.0.4/"
-	//Nconfirmed is the block height block is regarded as confirmed.
-	Nconfirmed = 5
+import (
+	"fmt"
+	"log"
+	"net"
+	"sync"
+
+	"github.com/monarj/wallet/params"
 )
+
+var (
+	//myself represents my ip and port.
+	myself *net.TCPAddr
+	mutex  sync.RWMutex
+)
+
+func init() {
+	var err error
+	myself, err = net.ResolveTCPAddr("tcp", fmt.Sprintf("127.0.0.1:%d", params.Port))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+//SetIP sets my IP address.
+func SetIP(ip []byte) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	myself.IP = net.IP(ip)
+}
+
+//SetPort sets my port number.
+func SetPort(port int) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	myself.Port = port
+}
+
+//Get returns my TCPAddr.
+func Get() *net.TCPAddr {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	m := net.TCPAddr{}
+	m = *myself
+	return &m
+}

@@ -30,8 +30,28 @@ package msg
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"log"
 	"net"
+	"time"
+
+	"golang.org/x/crypto/scrypt"
+
+	"encoding/binary"
+	"encoding/hex"
+
+	"github.com/monarj/wallet/params"
+)
+
+//Object types for inv_vec.
+const (
+	MsgError uint32 = iota
+	MsgTX
+	MsgBlock
+	MsgFilterdBlock
+	MsgCmpctBlock
 )
 
 //Message is the header of message.
@@ -40,7 +60,7 @@ type Message struct {
 	Command  []byte `len:"12"`
 	Length   uint32
 	CheckSum []byte `len:"4"`
-	Payload  []byte `loc_of_len:"2"`
+	Payload  []byte `len:"var"`
 }
 
 //GetCommand converts Command field to string.
@@ -55,15 +75,79 @@ type InvVec struct {
 	Hash []byte `len:"32"`
 }
 
-//BlockHeaders are sent in a headers packet in response to a getheaders message.
-type BlockHeaders struct {
+//BlockHeader are sent in a headers packet in response to a getheaders message.
+type BlockHeader struct {
 	Version   uint32
 	Prev      []byte `len:"32"`
 	Merkle    []byte `len:"32"`
 	Timestamp uint32
-	Bits      []byte `len:"4"`
+	Bits      uint32
 	Nonce     []byte `len:"4"`
 	TxnCount  byte
+}
+
+func (b *BlockHeader) scrypt() ([]byte, error) {
+	var buf bytes.Buffer
+	if err := Pack(&buf, *b); err != nil {
+		log.Fatal(err)
+	}
+	bs := buf.Bytes()
+	converted, err := scrypt.Key(bs, bs, 1024, 1, 1, 32)
+	if err != nil {
+		return nil, err
+	}
+	log.Println(hex.EncodeToString(converted))
+	return converted, nil
+}
+
+//Hash returns hash of the block.
+func (b *BlockHeader) Hash() []byte {
+	var buf bytes.Buffer
+	if err := Pack(&buf, *b); err != nil {
+		log.Fatal(err)
+	}
+	bs := buf.Bytes()
+	bs = bs[:len(bs)-1]
+	h := sha256.Sum256(bs)
+	h = sha256.Sum256(h[:])
+	//	b.scrypt()
+	return h[:]
+}
+
+func reverse(bs []byte) []byte {
+	for i := 0; i < len(bs)/2; i++ {
+		bs[i], bs[len(bs)-1-i] = bs[len(bs)-1-i], bs[i]
+	}
+	return bs
+}
+
+//target returns hash target by converting nBits.
+func (b *BlockHeader) target() []byte {
+	bits := make([]byte, 4)
+	binary.LittleEndian.PutUint32(bits, b.Bits)
+	target := make([]byte, 32)
+	target[32-bits[3]] = bits[2]
+	target[33-bits[3]] = bits[1]
+	target[34-bits[3]] = bits[0]
+	return target
+}
+
+//IsOK returns error is something in header is wrong.
+func (b *BlockHeader) IsOK() error {
+	h := b.Hash()
+	if b.Bits < params.ProofOfWorkLimit {
+		return errors.New("PoW limits is too easy")
+	}
+	if b.Timestamp > uint32(time.Now().Unix()) {
+		return errors.New("future packet")
+	}
+	if b.TxnCount != 0 {
+		return errors.New("header contains txn")
+	}
+	if bytes.Compare(b.target(), reverse(h)) < 0 {
+		return errors.New("hash doesn't match target")
+	}
+	return nil
 }
 
 //Version is a version info nodes send first.
@@ -82,11 +166,11 @@ type Version struct {
 //Inv allows a node to advertise its knowledge of one or more objects
 type Inv struct {
 	Count     VarInt
-	Inventory []InvVec `loc_of_len:"0"`
+	Inventory []InvVec `len:"var"`
 }
 
 //GetData is used in response to inv, to retrieve the content of a
-//specific object, and is usually sent after receiving an inv packe
+//specific object, and is usually sent after receiving an inv packet.
 type GetData Inv
 
 //NotFound is a response to a getdata,
@@ -104,7 +188,7 @@ type Hash struct {
 type Getblocks struct {
 	Version   uint32
 	HashCount VarInt
-	LocHashes Hash   `loc_of_len:"0"`
+	LocHashes []Hash `len:"var"`
 	HashStop  []byte `len:"32"`
 }
 
@@ -124,7 +208,7 @@ type Pong Ping
 //Headers packet returns block headers in response to a getheaders packet.
 type Headers struct {
 	Count     VarInt
-	Inventory []BlockHeaders `loc_of_len:"0"`
+	Inventory []BlockHeader `loc_of_len:"0"`
 }
 
 //TxIn is the info of input transaction.
@@ -132,7 +216,7 @@ type TxIn struct {
 	Hash      []byte `len:"32"`
 	Index     uint32
 	ScriptLen VarInt
-	Script    []byte `loc_of_len:"1"`
+	Script    []byte `len:"var"`
 	Seq       uint32
 }
 
@@ -140,23 +224,23 @@ type TxIn struct {
 type TxOut struct {
 	Value     uint64
 	ScriptLen VarInt
-	Script    []byte `loc_of_len:"1"`
+	Script    []byte `len:"var"`
 }
 
 //Tx describes a bitcoin transaction,
 type Tx struct {
 	Version  uint32
 	InCount  VarInt
-	TxIn     []TxIn `loc_of_len:"1"`
+	TxIn     []TxIn `len:"var"`
 	OutCount VarInt
-	TxOut    []TxOut `loc_of_len:"3"`
+	TxOut    []TxOut `len:"var"`
 	Locktime uint32
 }
 
 //Addr provides information on known nodes of the network
 type Addr struct {
 	Count VarInt
-	Addr  []NetAddrTime `loc_of_len:"0"`
+	Addr  []NetAddrTime `len:"var"`
 }
 
 //NetAddr represents network addres. for now it's just a dummy.
@@ -173,12 +257,16 @@ func (a *NetAddr) TCPAddr() (*net.TCPAddr, error) {
 }
 
 //NewNetAddr returns NetAddr struct.
-func NewNetAddr(a *net.TCPAddr, s uint64) *NetAddr {
+func NewNetAddr(adr string, s uint64) (*NetAddr, error) {
+	a, err := net.ResolveTCPAddr("tcp", adr)
+	if err != nil {
+		return nil, err
+	}
 	return &NetAddr{
 		Service: s,
 		IPv6:    []byte(a.IP),
 		Port:    uint16(a.Port),
-	}
+	}, nil
 }
 
 //NetAddrTime is NetAddr with time.
@@ -196,16 +284,16 @@ type Merkleblock struct {
 	Bits      []byte `len:"4"`
 	Nonce     []byte `len:"4"`
 	Total     uint32
-	Nhash     byte
-	Hashes    []Hash `loc_of_len:"7"`
-	Nflags    byte
-	Flags     []byte `loc_of_len:"9"`
+	Nhash     VarInt
+	Hashes    []Hash `len:"var"`
+	NFlags    VarInt
+	Flags     []byte `len:"var"`
 }
 
 //FilterLoad sets the current Bloom filter on the connection
 type FilterLoad struct {
-	Nfilter    byte
-	Filter     []byte `loc_of_len:"0"`
+	NFilter    VarInt
+	Filter     []byte `len:"var"`
 	NhashFuncs uint32
 	NTweak     uint32
 	Nflags     byte
@@ -214,6 +302,6 @@ type FilterLoad struct {
 //FilterAdd adds the given data element to the connections
 //current filter without requiring a completely new one to be set
 type FilterAdd struct {
-	Ndata byte
-	Data  []byte `loc_of_len:"0"`
+	Ndata VarInt
+	Data  []byte `len:"var"`
 }

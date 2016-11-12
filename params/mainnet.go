@@ -35,13 +35,13 @@ import (
 
 const (
 	//DumpedPrivateKeyHeader is the first byte of a base58 encoded dumped private key.
-	DumpedPrivateKeyHeader = 178 //This is always addressHeader + 128
+	DumpedPrivateKeyHeader byte = 178 //This is always addressHeader + 128
 	//DumpedPrivateKeyHeaderAlt  is another first byte of a base58 encoded dumped private key.
-	DumpedPrivateKeyHeaderAlt = 176 // monacoin-qt 0.10.x (not modified from litecoin ...)
+	DumpedPrivateKeyHeaderAlt byte = 176 // monacoin-qt 0.10.x (not modified from litecoin ...)
 	//AddressHeader is the First byte of a base58 encoded address. This the one used for "normal" addresses.
-	AddressHeader = 50
-	//P2shHeader is the first byte of a base58 encoded P2SH address.  P2SH addresses are defined as part of BIP0013.
-	P2shHeader = 5
+	AddressHeader byte = 50
+	//P2SHHeader is the first byte of a base58 encoded P2SH address.  P2SH addresses are defined as part of BIP0013.
+	P2SHHeader = 5
 	//ID is id to identify testnet or mainnet.
 	ID = MainNet
 	//Port is the default port of listen.
@@ -55,9 +55,18 @@ const (
 var (
 	//PacketMagic is  the header bytes that identify the start of a packet on this network
 	PacketMagic = []byte{0xfb, 0xc0, 0xb6, 0xdb}
-	//Genesis is the params for genesis blocks.
-	Genesis = newGenesisParams(0x1e0ffff0, 1388479472, 1234534,
-		"ff9f1c0116d19de7c9963845e129f9ed1bfc0b376eb54fd7afa42e0d418c8bb6")
+	//GenesisVersion is the version of genesis blocks.
+	GenesisVersion uint32 = 1
+	//GenesisTime is the time of genesis blocks.
+	GenesisTime uint32 = 1388479472
+	//GenesisBits is the nBits of genesis blocks.
+	GenesisBits uint32 = 0x1e0ffff0
+	//GenesisNonce is the nonce of genesis blocks.
+	GenesisNonce = []byte{0x66, 0xd6, 0x12, 0x00}
+	//GenesisMerkle is the merkle root of genesis blocks.
+	GenesisMerkle []byte
+	//GenesisHash is the hash of genesis blocks.
+	GenesisHash []byte
 	//CheckPoints are points hash should be checked.
 	CheckPoints = make(map[int][]byte)
 	//DNSSeeds is the list of dns for node seeds.
@@ -70,6 +79,17 @@ var (
 )
 
 func init() {
+	var err error
+	merkleGenesis :=
+		"a64bac07fe31877f31d03252953b3c32398933af7a724119bc4d6fa4a805e435"
+	if GenesisMerkle, err = hex.DecodeString(merkleGenesis); err != nil {
+		log.Fatal(err)
+	}
+	hashGenesis :=
+		"b68b8c410d2ea4afd74fb56e370bfc1bedf929e1453896c9e79dd116011c9fff"
+	if GenesisHash, err = hex.DecodeString(hashGenesis); err != nil {
+		log.Fatal(err)
+	}
 	cpoints := map[int]string{
 		1500:   "9f42d51d18d0a8914a00664c433a0ca4be3eed02f9374d790bffbd3d3053d41d",
 		4000:   "2c60edac7d9f44d90d1e218af2a8085e78b735185c5bf42f9fe9dbd0e604c97b",

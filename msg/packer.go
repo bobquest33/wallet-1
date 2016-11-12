@@ -48,7 +48,7 @@ func Pack(buf io.Writer, t interface{}) error {
 	if ty.Kind() != reflect.Struct {
 		return errors.New("must be struct")
 	}
-	vals := make(map[int]uint64)
+	var val uint64
 	for i := 0; i < ty.NumField(); i++ {
 		f := v.Field(i)
 		intf := f.Interface()
@@ -57,28 +57,28 @@ func Pack(buf io.Writer, t interface{}) error {
 		case uint64:
 			result = make([]byte, 8)
 			binary.LittleEndian.PutUint64(result, dat)
-			vals[i] = dat
+			val = dat
 		case uint32:
 			result = make([]byte, 4)
 			binary.LittleEndian.PutUint32(result, dat)
-			vals[i] = uint64(dat)
+			val = uint64(dat)
 		case uint16:
 			result = make([]byte, 2)
 			binary.LittleEndian.PutUint16(result, dat)
-			vals[i] = uint64(dat)
+			val = uint64(dat)
 		case byte:
 			result = []byte{dat}
-			vals[i] = uint64(dat)
+			val = uint64(dat)
 		case []byte:
 			var err error
-			result, err = makeBytesFromTag(ty.Field(i).Tag, vals)
+			result, err = makeBytesFromTag(ty.Field(i).Tag, val)
 			if err != nil {
 				return err
 			}
 			copy(result, dat)
 		case VarInt:
 			result = int2varint(uint64(dat))
-			vals[i] = uint64(dat)
+			val = uint64(dat)
 		case string:
 			if _, err := buf.Write(int2varint(uint64(len(dat)))); err != nil {
 				return err
@@ -117,7 +117,7 @@ func Unpack(buf io.Reader, t interface{}) error {
 	if ty.Kind() != reflect.Struct {
 		return errors.New("must be struct")
 	}
-	vals := make(map[int]uint64)
+	var val uint64
 	for i := 0; i < ty.NumField(); i++ {
 		vi := v.Field(i)
 		if !(vi.IsValid() && vi.CanSet()) {
@@ -128,58 +128,59 @@ func Unpack(buf io.Reader, t interface{}) error {
 		switch intf.(type) {
 		case uint64:
 			b := make([]byte, 8)
-			if _, err := buf.Read(b); err != nil {
+			if _, err := io.ReadFull(buf, b); err != nil {
 				return err
 			}
 			dat := binary.LittleEndian.Uint64(b)
-			vals[i] = dat
+			val = dat
 			result = dat
 		case uint32:
 			b := make([]byte, 4)
-			if _, err := buf.Read(b); err != nil {
+			if _, err := io.ReadFull(buf, b); err != nil {
 				return err
 			}
 			dat := binary.LittleEndian.Uint32(b)
 			result = dat
-			vals[i] = uint64(dat)
+			val = uint64(dat)
 		case uint16:
 			b := make([]byte, 2)
-			if _, err := buf.Read(b); err != nil {
+			if _, err := io.ReadFull(buf, b); err != nil {
 				return err
 			}
 			dat := binary.LittleEndian.Uint16(b)
 			result = dat
-			vals[i] = uint64(dat)
+			val = uint64(dat)
 		case byte:
 			bs := make([]byte, 1)
-			if _, err := buf.Read(bs); err != nil {
+			if _, err := io.ReadFull(buf, bs); err != nil {
 				return err
 			}
 			result = bs[0]
-			vals[i] = uint64(bs[0])
+			val = uint64(bs[0])
 		case VarInt:
 			dat, err := byte2varint(buf)
 			if err != nil {
 				return err
 			}
 			result = VarInt(dat)
+			val = dat
 		case string:
 			siz, err := byte2varint(buf)
 			if err != nil {
 				return err
 			}
 			b := make([]byte, siz)
-			if _, err = buf.Read(b); err != nil {
+			if _, err := io.ReadFull(buf, b); err != nil {
 				return err
 			}
 			result = string(b)
 		case []byte:
-			dat, err := makeBytesFromTag(ty.Field(i).Tag, vals)
+			dat, err := makeBytesFromTag(ty.Field(i).Tag, val)
 			if err != nil {
 				return err
 			}
-			if _, err = buf.Read(dat); err != nil {
-				log.Println(i, err)
+			if _, err := io.ReadFull(buf, dat); err != nil {
+				log.Println(err)
 				return err
 			}
 			result = dat
@@ -190,7 +191,7 @@ func Unpack(buf io.Reader, t interface{}) error {
 					return err
 				}
 			case reflect.Slice:
-				newv, err := makeValueFromTag(ty.Field(i).Tag, vals, vi)
+				newv, err := makeValueFromTag(ty.Field(i).Tag, val, vi)
 				if err != nil {
 					return err
 				}
@@ -211,30 +212,23 @@ func Unpack(buf io.Reader, t interface{}) error {
 	return nil
 }
 
-func getTagValue(tag reflect.StructTag, vals map[int]uint64) (int, error) {
+func getTagValue(tag reflect.StructTag, val uint64) (int, error) {
 	le := tag.Get("len")
-	lo := tag.Get("loc_of_len")
 	var n int
 	var err error
 	switch {
-	case le != "":
-		n, err = strconv.Atoi(le)
-	case lo != "":
-		var nn int
-		nn, err = strconv.Atoi(lo)
-		ss, ok := vals[nn]
-		if !ok {
-			err = fmt.Errorf("Field %d is not integer", nn)
-		}
-		n = int(ss)
-	default:
+	case le == "var":
+		n = int(val)
+	case le == "":
 		err = fmt.Errorf("must fill the tag")
+	default:
+		n, err = strconv.Atoi(le)
 	}
 	return n, err
 }
 
-func makeBytesFromTag(tag reflect.StructTag, vals map[int]uint64) ([]byte, error) {
-	n, err := getTagValue(tag, vals)
+func makeBytesFromTag(tag reflect.StructTag, val uint64) ([]byte, error) {
+	n, err := getTagValue(tag, val)
 	if err != nil {
 		return nil, err
 	}
@@ -242,9 +236,9 @@ func makeBytesFromTag(tag reflect.StructTag, vals map[int]uint64) ([]byte, error
 	return d, nil
 }
 
-func makeValueFromTag(tag reflect.StructTag, vals map[int]uint64,
+func makeValueFromTag(tag reflect.StructTag, val uint64,
 	vi reflect.Value) (*reflect.Value, error) {
-	n, err := getTagValue(tag, vals)
+	n, err := getTagValue(tag, val)
 	if err != nil {
 		return nil, err
 	}
@@ -255,13 +249,13 @@ func makeValueFromTag(tag reflect.StructTag, vals map[int]uint64,
 //byte2varint converts []byte to varsint uint64.
 func byte2varint(dat io.Reader) (uint64, error) {
 	bb := make([]byte, 1)
-	if _, err := dat.Read(bb); err != nil {
+	if _, err := io.ReadFull(dat, bb); err != nil {
 		return 0, err
 	}
 	switch bb[0] {
 	case 0xfd:
 		bs := make([]byte, 2)
-		_, err := dat.Read(bs)
+		_, err := io.ReadFull(dat, bs)
 		if err != nil {
 			return 0, err
 		}
@@ -269,7 +263,7 @@ func byte2varint(dat io.Reader) (uint64, error) {
 		return uint64(v), nil
 	case 0xfe:
 		bs := make([]byte, 4)
-		_, err := dat.Read(bs)
+		_, err := io.ReadFull(dat, bs)
 		if err != nil {
 			return 0, err
 		}
@@ -277,7 +271,7 @@ func byte2varint(dat io.Reader) (uint64, error) {
 		return uint64(v), nil
 	case 0xff:
 		bs := make([]byte, 8)
-		_, err := dat.Read(bs)
+		_, err := io.ReadFull(dat, bs)
 		if err != nil {
 			return 0, err
 		}
