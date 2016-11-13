@@ -34,14 +34,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"time"
 
 	"golang.org/x/crypto/scrypt"
 
 	"encoding/binary"
-	"encoding/hex"
 
+	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/params"
 )
 
@@ -75,18 +76,23 @@ type InvVec struct {
 	Hash []byte `len:"32"`
 }
 
-//BlockHeader are sent in a headers packet in response to a getheaders message.
-type BlockHeader struct {
+//HBlockHeader is header of block header.
+type HBlockHeader struct {
 	Version   uint32
 	Prev      []byte `len:"32"`
 	Merkle    []byte `len:"32"`
 	Timestamp uint32
 	Bits      uint32
 	Nonce     []byte `len:"4"`
-	TxnCount  byte
 }
 
-func (b *BlockHeader) scrypt() ([]byte, error) {
+//BlockHeader are sent in a headers packet in response to a getheaders message.
+type BlockHeader struct {
+	HBlockHeader
+	TxnCount byte
+}
+
+func (b *HBlockHeader) scrypt() []byte {
 	var buf bytes.Buffer
 	if err := Pack(&buf, *b); err != nil {
 		log.Fatal(err)
@@ -94,57 +100,48 @@ func (b *BlockHeader) scrypt() ([]byte, error) {
 	bs := buf.Bytes()
 	converted, err := scrypt.Key(bs, bs, 1024, 1, 1, 32)
 	if err != nil {
-		return nil, err
+		log.Fatal(err)
 	}
-	log.Println(hex.EncodeToString(converted))
-	return converted, nil
+	return converted
 }
 
 //Hash returns hash of the block.
-func (b *BlockHeader) Hash() []byte {
+func (b *HBlockHeader) Hash() []byte {
+	return hash(*b)
+}
+
+func hash(b interface{}) []byte {
 	var buf bytes.Buffer
-	if err := Pack(&buf, *b); err != nil {
+	if err := Pack(&buf, b); err != nil {
 		log.Fatal(err)
 	}
 	bs := buf.Bytes()
-	bs = bs[:len(bs)-1]
 	h := sha256.Sum256(bs)
 	h = sha256.Sum256(h[:])
-	//	b.scrypt()
 	return h[:]
 }
 
-func reverse(bs []byte) []byte {
-	for i := 0; i < len(bs)/2; i++ {
-		bs[i], bs[len(bs)-1-i] = bs[len(bs)-1-i], bs[i]
-	}
-	return bs
-}
-
 //target returns hash target by converting nBits.
-func (b *BlockHeader) target() []byte {
+func (b *HBlockHeader) target() []byte {
 	bits := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bits, b.Bits)
 	target := make([]byte, 32)
-	target[32-bits[3]] = bits[2]
-	target[33-bits[3]] = bits[1]
-	target[34-bits[3]] = bits[0]
+	target[bits[3]-1] = bits[2]
+	target[bits[3]-2] = bits[1]
+	target[bits[3]-3] = bits[0]
 	return target
 }
 
 //IsOK returns error is something in header is wrong.
-func (b *BlockHeader) IsOK() error {
-	h := b.Hash()
-	if b.Bits < params.ProofOfWorkLimit {
-		return errors.New("PoW limits is too easy")
+func (b *HBlockHeader) IsOK() error {
+	sc := b.scrypt()
+	if b.Bits > params.ProofOfWorkLimit {
+		return fmt.Errorf("PoW limits is too easy %x > %x", b.Bits, params.ProofOfWorkLimit)
 	}
 	if b.Timestamp > uint32(time.Now().Unix()) {
 		return errors.New("future packet")
 	}
-	if b.TxnCount != 0 {
-		return errors.New("header contains txn")
-	}
-	if bytes.Compare(b.target(), reverse(h)) < 0 {
+	if behex.Compare(b.target(), sc) < 0 {
 		return errors.New("hash doesn't match target")
 	}
 	return nil
@@ -169,9 +166,9 @@ type Inv struct {
 	Inventory []InvVec `len:"var"`
 }
 
-//GetData is used in response to inv, to retrieve the content of a
+//Getdata is used in response to inv, to retrieve the content of a
 //specific object, and is usually sent after receiving an inv packet.
-type GetData Inv
+type Getdata Inv
 
 //NotFound is a response to a getdata,
 //sent if any requested data items could not be relayed
@@ -192,10 +189,10 @@ type Getblocks struct {
 	HashStop  []byte `len:"32"`
 }
 
-//GetHeaders Return a headers packet containing the headers of blocks
+//Getheaders Return a headers packet containing the headers of blocks
 //starting right after the last known hash in the block locator object
 //, up to hash_stop or2 000 blocks, whichever comes first.
-type GetHeaders Getblocks
+type Getheaders Getblocks
 
 //Ping message is sent primarily to confirm that the TCP/IP connection is still valid
 type Ping struct {
@@ -208,7 +205,7 @@ type Pong Ping
 //Headers packet returns block headers in response to a getheaders packet.
 type Headers struct {
 	Count     VarInt
-	Inventory []BlockHeader `loc_of_len:"0"`
+	Inventory []BlockHeader `len:"var"`
 }
 
 //TxIn is the info of input transaction.
@@ -235,6 +232,11 @@ type Tx struct {
 	OutCount VarInt
 	TxOut    []TxOut `len:"var"`
 	Locktime uint32
+}
+
+//Hash returns hash of the tx.
+func (b *Tx) Hash() []byte {
+	return hash(*b)
 }
 
 //Addr provides information on known nodes of the network
@@ -277,17 +279,87 @@ type NetAddrTime struct {
 
 //Merkleblock represents a filtered block.
 type Merkleblock struct {
-	Version   uint32
-	Prev      []byte `len:"32"`
-	Merkle    []byte `len:"32"`
-	Timestamp uint32
-	Bits      []byte `len:"4"`
-	Nonce     []byte `len:"4"`
-	Total     uint32
-	Nhash     VarInt
-	Hashes    []Hash `len:"var"`
-	NFlags    VarInt
-	Flags     []byte `len:"var"`
+	HBlockHeader
+	Total  uint32
+	Nhash  VarInt
+	Hashes []Hash `len:"var"`
+	NFlags VarInt
+	Flags  []byte `len:"var"`
+}
+
+type merkle struct {
+	height int
+	hashes []Hash
+	flags  *big.Int
+	mask   int
+	nHash  int
+	tx     []Hash
+	nleaf  int
+	total  uint32
+}
+
+func (m *merkle) hash(stair int) (Hash, error) {
+	m.mask++
+	if stair == m.height {
+		m.nleaf++
+		if m.total&0x1 == 1 && m.nleaf == int(m.total+1) {
+			return m.hashes[m.nHash-1], nil
+		}
+		if m.nleaf > int(m.total) {
+			return Hash{}, errors.New("illegal merkle")
+		}
+	}
+	if m.flags.Bit(m.mask-1) == 0 {
+		m.nHash++
+		return m.hashes[m.nHash-1], nil
+	}
+	if stair == m.height {
+		m.tx = append(m.tx, m.hashes[m.nHash])
+		m.nHash++
+		return m.hashes[m.nHash-1], nil
+	}
+	hleft, err := m.hash(stair + 1)
+	if err != nil {
+		return Hash{}, nil
+	}
+	hright, err := m.hash(stair + 1)
+	if err != nil {
+		return Hash{}, nil
+	}
+	conc := append(hleft.Hash, hright.Hash...)
+	sum := sha256.Sum256(conc)
+	sum = sha256.Sum256(sum[:])
+	return Hash{Hash: sum[:]}, nil
+}
+
+//FilteredTx checks merkleblock and returns filtered txs.
+func (m *Merkleblock) FilteredTx() ([]Hash, error) {
+	var height, count int
+	//faster than log2?
+	for height, count = 0, 1; count < int(m.Total); height++ {
+		count *= 2
+	}
+	f := new(big.Int)
+	f.SetBytes(m.Flags)
+	me := merkle{
+		height: height,
+		hashes: m.Hashes,
+		flags:  f,
+		total:  m.Total,
+	}
+	mmm, err := me.hash(0)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(m.Merkle, mmm.Hash) {
+		err = fmt.Errorf("merkle not match %s,%s",
+			behex.EncodeToString(m.Merkle), behex.EncodeToString(mmm.Hash))
+		return me.tx, err
+	}
+	if int(m.Nhash) != me.nHash {
+		err = fmt.Errorf("not use all hashes %d %d", m.Nhash, me.nHash)
+	}
+	return me.tx, err
 }
 
 //FilterLoad sets the current Bloom filter on the connection

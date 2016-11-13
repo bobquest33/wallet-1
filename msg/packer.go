@@ -175,7 +175,8 @@ func Unpack(buf io.Reader, t interface{}) error {
 			}
 			result = string(b)
 		case []byte:
-			dat, err := makeBytesFromTag(ty.Field(i).Tag, val)
+			tag := ty.Field(i).Tag
+			dat, err := makeBytesFromTag(tag, val)
 			if err != nil {
 				return err
 			}
@@ -220,7 +221,7 @@ func getTagValue(tag reflect.StructTag, val uint64) (int, error) {
 	case le == "var":
 		n = int(val)
 	case le == "":
-		err = fmt.Errorf("must fill the tag")
+		err = fmt.Errorf("no len tag")
 	default:
 		n, err = strconv.Atoi(le)
 	}

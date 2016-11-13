@@ -40,6 +40,7 @@ import (
 
 	"golang.org/x/crypto/ripemd160"
 
+	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/block"
 	"github.com/monarj/wallet/bloom"
 	"github.com/monarj/wallet/key"
@@ -155,16 +156,16 @@ func (n *Node) readPong(payload io.Reader) error {
 	return nil
 }
 
-func (n *Node) writeGetblocks() error {
+func (n *Node) writeGetheaders() error {
 	h := block.LocatorHash()
-	po := msg.Getblocks{
+	po := msg.Getheaders{
 		Version:   params.ProtocolVersion,
 		HashCount: msg.VarInt(len(h)),
 		LocHashes: h,
 		HashStop:  nil,
 	}
-	err := n.writeMessage("getblocks", po)
-	log.Println("sended getblocks")
+	err := n.writeMessage("getheaders", po)
+	log.Println("sended getheaders")
 	return err
 }
 
@@ -205,14 +206,78 @@ func (n *Node) readInv(payload io.Reader) error {
 		return err
 	}
 	for _, inv := range p.Inventory {
-		log.Printf("%d %x\n", inv.Type, reverse(inv.Hash))
+		log.Printf("msgtx %s", behex.EncodeToString(inv.Hash))
+		switch inv.Type {
+		case msg.MsgTX:
+			//TODO
+		case msg.MsgBlock:
+			if err := n.writeGetheaders(); err != nil {
+				return err
+			}
+		case msg.MsgFilterdBlock:
+		default:
+			return fmt.Errorf("unknown inv type %d", inv.Type)
+		}
 	}
 	return nil
 }
 
-func reverse(bs []byte) []byte {
-	for i := 0; i < len(bs)/2; i++ {
-		bs[i], bs[len(bs)-1-i] = bs[len(bs)-1-i], bs[i]
+func makeInv(t uint32, hash [][]byte) msg.Inv {
+	vec := make([]msg.InvVec, len(hash))
+	for i, h := range hash {
+		vec[i].Type = t
+		vec[i].Hash = h
 	}
-	return bs
+	return msg.Inv{
+		Count:     msg.VarInt(len(hash)),
+		Inventory: vec,
+	}
+}
+
+func (n *Node) writeInv(t uint32, hash [][]byte) error {
+	po := makeInv(t, hash)
+	err := n.writeMessage("inv", po)
+	log.Println("sended inv")
+	return err
+}
+
+func (n *Node) writeGetdata(t uint32, hash [][]byte) error {
+	po := msg.Getdata(makeInv(t, hash))
+	err := n.writeMessage("getdata", po)
+	log.Println("sended getdata")
+	return err
+}
+
+func (n *Node) readHeaders(payload io.Reader) error {
+	p := msg.Headers{}
+	if err := msg.Unpack(payload, &p); err != nil {
+		return err
+	}
+	hashes, err := block.Add(p)
+	if err != nil {
+		return err
+	}
+	if err := n.writeGetdata(msg.MsgFilterdBlock, hashes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *Node) readTx(payload io.Reader) error {
+	p := msg.Tx{}
+	if err := msg.Unpack(payload, &p); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *Node) readMerkle(payload io.Reader) error {
+	p := msg.Merkleblock{}
+	if err := msg.Unpack(payload, &p); err != nil {
+		return err
+	}
+	if !block.Has(p.Hash()) {
+		return errors.New("no merkle hash in the chain." + behex.EncodeToString(p.Hash()))
+	}
+	return nil
 }

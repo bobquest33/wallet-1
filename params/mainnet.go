@@ -29,8 +29,9 @@
 package params
 
 import (
-	"encoding/hex"
 	"log"
+
+	"github.com/monarj/wallet/behex"
 )
 
 const (
@@ -81,13 +82,13 @@ var (
 func init() {
 	var err error
 	merkleGenesis :=
-		"a64bac07fe31877f31d03252953b3c32398933af7a724119bc4d6fa4a805e435"
-	if GenesisMerkle, err = hex.DecodeString(merkleGenesis); err != nil {
+		"35e405a8a46f4dbc1941727aaf338939323c3b955232d0317f8731fe07ac4ba6"
+	if GenesisMerkle, err = behex.DecodeString(merkleGenesis); err != nil {
 		log.Fatal(err)
 	}
 	hashGenesis :=
-		"b68b8c410d2ea4afd74fb56e370bfc1bedf929e1453896c9e79dd116011c9fff"
-	if GenesisHash, err = hex.DecodeString(hashGenesis); err != nil {
+		"ff9f1c0116d19de7c9963845e129f9ed1bfc0b376eb54fd7afa42e0d418c8bb6"
+	if GenesisHash, err = behex.DecodeString(hashGenesis); err != nil {
 		log.Fatal(err)
 	}
 	cpoints := map[int]string{
@@ -106,7 +107,7 @@ func init() {
 	}
 
 	for k, v := range cpoints {
-		h, err := hex.DecodeString(v)
+		h, err := behex.DecodeString(v)
 		if err != nil {
 			log.Fatal(err)
 		}

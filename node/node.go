@@ -33,7 +33,7 @@ import (
 	"log"
 	"net"
 
-	"fmt"
+	"io"
 	"time"
 )
 
@@ -115,28 +115,28 @@ func (n *Node) errHandle(err error) error {
 
 //Loop starts node lifecyle.
 func (n *Node) Loop() error {
+	funcs := map[string]func(io.Reader) error{
+		"ping":        n.pongAfterReadPing,
+		"pong":        n.readPong,
+		"inv":         n.readInv,
+		"headers":     n.readHeaders,
+		"merkleblock": n.readMerkle,
+		"tx":          n.readTx,
+	}
 	for {
 		cmd, payload, err := n.readMessage()
 		if err = n.errHandle(err); err != nil {
 			return n.errClose(err)
 		}
 		log.Println(cmd + " from " + n.conn.RemoteAddr().String())
-		switch cmd {
-		case "ping":
-			if err = n.pongAfterReadPing(payload); err != nil {
-				return n.errClose(err)
-			}
-		case "pong":
-			if err = n.readPong(payload); err != nil {
-				return n.errClose(err)
-			}
-		case "inv":
-			if err = n.readInv(payload); err != nil {
-				return n.errClose(err)
-			}
-		default:
-			err = fmt.Errorf("%s:unknown command", cmd)
-			log.Println(err)
+		f, exist := funcs[cmd]
+		if !exist {
+			log.Printf("%s:unknown or unsupported command", cmd)
+			continue
+		}
+		err = f(payload)
+		if err = n.errHandle(err); err != nil {
+			return n.errClose(err)
 		}
 		if err := n.setDeadline(); err != nil {
 			return n.errClose(err)
@@ -211,11 +211,11 @@ func (n *Node) Handshake() error {
 		return err
 	}
 	log.Println("sended mempool")
-	/*
-		if err = n.writeGetblocks(); err != nil {
-			log.Println(err)
-			return err
-		}
-	*/
+
+	if err = n.writeGetheaders(); err != nil {
+		log.Println(err)
+		return err
+	}
+
 	return nil
 }

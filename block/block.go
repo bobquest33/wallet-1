@@ -34,10 +34,9 @@ import (
 
 	"sync"
 
-	"encoding/hex"
-
 	"bytes"
 
+	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/params"
 )
@@ -46,29 +45,40 @@ var (
 	genesis   *Block
 	tails     = make(map[string]*Block)
 	blocks    = make(map[string]*Block)
-	LastBlock = genesis
+	lastBlock = genesis
 	mutex     sync.RWMutex
 )
 
 func init() {
 	g := msg.BlockHeader{
-		Version:   params.GenesisVersion,
-		Merkle:    params.GenesisMerkle,
-		Timestamp: params.GenesisTime,
-		Bits:      params.GenesisBits,
-		Nonce:     params.GenesisNonce,
-		TxnCount:  0,
+		HBlockHeader: msg.HBlockHeader{
+			Version:   params.GenesisVersion,
+			Merkle:    params.GenesisMerkle,
+			Timestamp: params.GenesisTime,
+			Bits:      params.GenesisBits,
+			Nonce:     params.GenesisNonce,
+		},
+		TxnCount: 0,
 	}
 	hg := g.Hash()
 	if !bytes.Equal(hg, params.GenesisHash) {
-		log.Fatal("illegal hash of genesis block.", hex.EncodeToString(hg))
+		log.Fatal("illegal hash of genesis block.", behex.EncodeToString(hg))
 	}
 	genesis = &Block{
 		block:  &g,
 		height: 0,
 	}
-	LastBlock = genesis
+	lastBlock = genesis
 	tails[string(hg)] = genesis
+	blocks[string(hg)] = genesis
+}
+
+//Has returns true if hash is in blocks.
+func Has(hash []byte) bool {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	_, ok := blocks[string(hash)]
+	return ok
 }
 
 //Block is block header with height.
@@ -77,50 +87,51 @@ type Block struct {
 	height int
 }
 
-//Add adds blocks to the chain.
+//Add adds blocks to the chain and returns hashes of these.
 //We must add blocks in height order.
-func Add(mbs msg.Headers) error {
-	for _, b := range mbs.Inventory {
+func Add(mbs msg.Headers) ([][]byte, error) {
+	hashes := make([][]byte, len(mbs.Inventory))
+	mutex.Lock()
+	defer mutex.Unlock()
+	for i, b := range mbs.Inventory {
 		if err := b.IsOK(); err != nil {
-			return err
+			return hashes, err
 		}
 		h := b.Hash()
-
 		if _, exist := blocks[string(h)]; exist {
-			return nil
+			continue
 		}
 		block := Block{
 			block: &b,
 		}
-		mutex.Lock()
-		defer mutex.Unlock()
 		p, ok := blocks[string(b.Prev)]
 		if !ok {
-			return errors.New("orphan block " + hex.EncodeToString(h))
+			log.Print(i)
+			return hashes, errors.New("orphan block " + behex.EncodeToString(b.Prev))
 		}
 		block.height = p.height + 1
 		blocks[string(h)] = &block
 		tails[string(h)] = &block
-		for k := range tails {
-			if k == string(b.Prev) {
-				delete(tails, k)
-				return nil
-			}
-		}
-		last := 0
-		for _, v := range tails {
-			if last < v.height {
-				last = v.height
-				LastBlock = v
-			}
-		}
-		for k, v := range tails {
-			if v.height < last-params.Nconfirmed {
-				delete(tails, k)
-			}
+		hashes[i] = h
+		updateTails(&block)
+	}
+	return hashes, nil
+}
+
+func updateTails(block *Block) {
+	for k := range tails {
+		if k == string(block.block.Prev) {
+			delete(tails, k)
 		}
 	}
-	return nil
+	if lastBlock.height < block.height {
+		lastBlock = block
+	}
+	for k, v := range tails {
+		if v.height < lastBlock.height-params.Nconfirmed {
+			delete(tails, k)
+		}
+	}
 }
 
 //LocatorHash is processed by a node in the order as they appear in the message.
@@ -130,7 +141,7 @@ func LocatorHash() []msg.Hash {
 	step := 1
 	var indexes []msg.Hash
 	ok := true
-	for index := LastBlock; ok; {
+	for index := lastBlock; ok; {
 		indexes = append(indexes, msg.Hash{Hash: index.block.Hash()})
 		if len(indexes) >= 10 {
 			step *= 2
