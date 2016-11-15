@@ -38,8 +38,6 @@ import (
 	"math/rand"
 	"time"
 
-	"golang.org/x/crypto/ripemd160"
-
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/block"
 	"github.com/monarj/wallet/bloom"
@@ -47,6 +45,7 @@ import (
 	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/myself"
 	"github.com/monarj/wallet/params"
+	"github.com/monarj/wallet/tx"
 )
 
 //ReadMessage read a message packet from buf and returns
@@ -172,15 +171,10 @@ func (n *Node) writeGetheaders() error {
 func (n *Node) writeFilterload() error {
 	bf := bloom.New()
 	klist := key.Get()
-	h := ripemd160.New()
 	for _, k := range klist {
 		_, adr := k.Pub.GetAddress()
+		bf.Insert(k.Pub.Serialize())
 		bf.Insert(adr)
-		if _, err := h.Write(adr); err != nil {
-			return err
-		}
-		bf.Insert(h.Sum(nil))
-		h.Reset()
 	}
 	aa := make([]byte, 512)
 	for i := 0; i < 512; i++ {
@@ -242,7 +236,7 @@ func (n *Node) writeInv(t uint32, hash [][]byte) error {
 }
 
 func (n *Node) writeGetdata(t uint32, hash [][]byte) error {
-	po := msg.Getdata(makeInv(t, hash))
+	po := makeInv(t, hash)
 	err := n.writeMessage("getdata", po)
 	log.Println("sended getdata")
 	return err
@@ -263,12 +257,23 @@ func (n *Node) readHeaders(payload io.Reader) error {
 	return nil
 }
 
-func (n *Node) readTx(payload io.Reader) error {
+func (n *Node) readTx(payload io.Reader, txs []msg.Hash) error {
 	p := msg.Tx{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
 	}
-	return nil
+	ok := false
+	for _, tx := range txs {
+		if !bytes.Equal(p.Hash(), tx.Hash) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return errors.New("no hash in txs")
+	}
+	err := tx.Add(&p)
+	return err
 }
 
 func (n *Node) readMerkle(payload io.Reader) error {
@@ -276,8 +281,30 @@ func (n *Node) readMerkle(payload io.Reader) error {
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
 	}
+	log.Println(p.Total)
+	txs, err := p.FilteredTx()
+	if err != nil {
+		return err
+	}
+	if len(txs) == 0 {
+		return nil
+	}
 	if !block.Has(p.Hash()) {
 		return errors.New("no merkle hash in the chain." + behex.EncodeToString(p.Hash()))
 	}
+	log.Println(len(txs), len(p.Hashes))
+	for i := 0; i < len(txs); i++ {
+		cmd, payload, err := n.readMessage()
+		if err != nil {
+			return err
+		}
+		if cmd != "tx" {
+			return errors.New("cannot recieve tx packets")
+		}
+		if err = n.readTx(payload, txs); err != nil {
+			return err
+		}
+	}
+	log.Println("read merkle")
 	return nil
 }

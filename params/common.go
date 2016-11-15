@@ -28,6 +28,26 @@
 
 package params
 
+import (
+	"log"
+
+	"golang.org/x/crypto/scrypt"
+)
+
+var (
+	//PoWFunc is a func to calculate PoW.
+	PoWFunc func(int, []byte) []byte = func(height int, data []byte) []byte {
+		if height >= 450000 {
+			return Lyra2REv2(data)
+		}
+		converted, err := scrypt.Key(data, data, 1024, 1, 1, 32)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return converted
+	}
+)
+
 const (
 	//Version is the version of this program.
 	Version = "0.0.0"
@@ -37,11 +57,18 @@ const (
 	MainNet = "main"
 	//TestNet represents testnet.
 	TestNet = "test"
-	//SwitchLYRA2 is the block from which number LYRA2 protocol begins.
-	SwitchLYRA2 = 450000
+
 	//UserAgent is the user agent.
 	UserAgent = "/monarj:" + Version + "/"
-	//	UserAgent = "/Satoshi:10.0.4/"
 	//Nconfirmed is the block height block is regarded as confirmed.
 	Nconfirmed = 5
+	//BTC is unit to convert BTC to satoshi
+	BTC = 100000000
+	//Fee for a transaction
+	Fee = uint64(0.0005 * BTC) //  0.5m BTC/kB
 )
+
+//TODO
+func Lyra2REv2(data []byte) []byte {
+	return nil
+}

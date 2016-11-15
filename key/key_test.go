@@ -38,13 +38,13 @@ import (
 )
 
 func TestKeys2(t *testing.T) {
-	key, err := GenerateKey(true)
+	key, err := GenerateKey()
 	if err != nil {
 		t.Errorf(err.Error())
 	}
 	adr, _ := key.Pub.GetAddress()
 	log.Println("address=", adr)
-	wif := key.Priv.GetWIFAddress()
+	wif := key.GetWIFAddress()
 	log.Println("wif=", wif)
 
 	key2, err := GetKeyFromWIF(wif)
@@ -60,13 +60,13 @@ func TestKeys2(t *testing.T) {
 }
 
 func TestKeys(t *testing.T) {
-	key, err := GenerateKey(false)
+	key, err := GenerateKey()
 	if err != nil {
 		t.Errorf(err.Error())
 	}
 	adr, _ := key.Pub.GetAddress()
 	log.Println("address=", adr)
-	wif := key.Priv.GetWIFAddress()
+	wif := key.GetWIFAddress()
 	log.Println("wif=", wif)
 
 	key2, err := GetKeyFromWIF(wif)
@@ -91,14 +91,14 @@ func TestKeys3(t *testing.T) {
 		t.Fatal(err)
 	}
 	s256 := btcec.S256()
-	private.key, public.key = btcec.PrivKeyFromBytes(s256, seed)
-	wif := private.GetWIFAddress()
+	private.PrivateKey, public.PublicKey = btcec.PrivKeyFromBytes(s256, seed)
+	wif := private.GetWIFAddress(false)
 	if wif != "6ySkrpLpwm6gKsWo2aS6EL1SZxidZNdJkKqsKRNjXzv9WSrpHjR" {
-		t.Errorf("wif not match")
+		t.Errorf("wif not match %s", wif)
 	}
 	adr, _ := public.GetAddress()
 	if adr != "MB3D45ngvaWRcACUmAFUf6fzcdXR8bVM6k" {
-		t.Errorf("address not match")
+		t.Errorf("address not match %s", adr)
 	}
 	log.Println(adr, wif)
 }

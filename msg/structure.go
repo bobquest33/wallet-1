@@ -38,8 +38,6 @@ import (
 	"net"
 	"time"
 
-	"golang.org/x/crypto/scrypt"
-
 	"encoding/binary"
 
 	"github.com/monarj/wallet/behex"
@@ -92,19 +90,6 @@ type BlockHeader struct {
 	TxnCount byte
 }
 
-func (b *HBlockHeader) scrypt() []byte {
-	var buf bytes.Buffer
-	if err := Pack(&buf, *b); err != nil {
-		log.Fatal(err)
-	}
-	bs := buf.Bytes()
-	converted, err := scrypt.Key(bs, bs, 1024, 1, 1, 32)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return converted
-}
-
 //Hash returns hash of the block.
 func (b *HBlockHeader) Hash() []byte {
 	return hash(*b)
@@ -133,15 +118,21 @@ func (b *HBlockHeader) target() []byte {
 }
 
 //IsOK returns error is something in header is wrong.
-func (b *HBlockHeader) IsOK() error {
-	sc := b.scrypt()
+func (b *HBlockHeader) IsOK(height int) error {
+	var buf bytes.Buffer
+	if err := Pack(&buf, *b); err != nil {
+		return err
+	}
+	bs := buf.Bytes()
+	pow := params.PoWFunc(height, bs)
+
 	if b.Bits > params.ProofOfWorkLimit {
 		return fmt.Errorf("PoW limits is too easy %x > %x", b.Bits, params.ProofOfWorkLimit)
 	}
 	if b.Timestamp > uint32(time.Now().Unix()) {
 		return errors.New("future packet")
 	}
-	if behex.Compare(b.target(), sc) < 0 {
+	if behex.Compare(b.target(), pow) < 0 {
 		return errors.New("hash doesn't match target")
 	}
 	return nil
@@ -288,43 +279,44 @@ type Merkleblock struct {
 }
 
 type merkle struct {
-	height int
 	hashes []Hash
 	flags  *big.Int
 	mask   int
 	nHash  int
 	tx     []Hash
-	nleaf  int
-	total  uint32
 }
 
-func (m *merkle) hash(stair int) (Hash, error) {
+type node struct {
+	left  *node
+	right *node
+}
+
+func (n *node) hash(m *merkle) (Hash, error) {
 	m.mask++
-	if stair == m.height {
-		m.nleaf++
-		if m.total&0x1 == 1 && m.nleaf == int(m.total+1) {
-			return m.hashes[m.nHash-1], nil
-		}
-		if m.nleaf > int(m.total) {
-			return Hash{}, errors.New("illegal merkle")
-		}
-	}
+	//flag=0
 	if m.flags.Bit(m.mask-1) == 0 {
 		m.nHash++
 		return m.hashes[m.nHash-1], nil
 	}
-	if stair == m.height {
+	//flag=1 && leaf
+	if n.left == nil && n.right == nil {
 		m.tx = append(m.tx, m.hashes[m.nHash])
 		m.nHash++
 		return m.hashes[m.nHash-1], nil
 	}
-	hleft, err := m.hash(stair + 1)
+	//flag=1 && non-leaf
+	hleft, err := n.left.hash(m)
 	if err != nil {
 		return Hash{}, nil
 	}
-	hright, err := m.hash(stair + 1)
-	if err != nil {
-		return Hash{}, nil
+	var hright Hash
+	if n.right != nil {
+		hright, err = n.right.hash(m)
+		if err != nil {
+			return Hash{}, nil
+		}
+	} else {
+		hright = hleft
 	}
 	conc := append(hleft.Hash, hright.Hash...)
 	sum := sha256.Sum256(conc)
@@ -334,20 +326,30 @@ func (m *merkle) hash(stair int) (Hash, error) {
 
 //FilteredTx checks merkleblock and returns filtered txs.
 func (m *Merkleblock) FilteredTx() ([]Hash, error) {
-	var height, count int
-	//faster than log2?
-	for height, count = 0, 1; count < int(m.Total); height++ {
-		count *= 2
+	nodes := make([]*node, 0, m.Total)
+	for i := 0; i < int(m.Total); i++ {
+		nodes = append(nodes, &node{})
+	}
+	roots := nodes
+	for ; len(roots) != 1; nodes = roots {
+		roots = roots[:0]
+		for i := 0; i < len(nodes); i++ {
+			left := nodes[i]
+			i++
+			var right *node
+			if i < len(nodes) {
+				right = nodes[i]
+			}
+			roots = append(roots, &node{left: left, right: right})
+		}
 	}
 	f := new(big.Int)
 	f.SetBytes(m.Flags)
 	me := merkle{
-		height: height,
 		hashes: m.Hashes,
 		flags:  f,
-		total:  m.Total,
 	}
-	mmm, err := me.hash(0)
+	mmm, err := roots[0].hash(&me)
 	if err != nil {
 		return nil, err
 	}

@@ -7,12 +7,13 @@ import (
 	"log"
 	"math/big"
 
-	"github.com/StorjPlatform/gocoin/base58check/base58"
+	"github.com/monarj/wallet/base58check/base58"
 )
 
+//Encode encodes byteData to base58.
 func Encode(prefix byte, byteData []byte) string {
 	length := len(byteData) + 1
-	encoded := make([]byte, length)
+	encoded := make([]byte, length, length+4)
 	encoded[0] = prefix
 	copy(encoded[1:], byteData)
 
@@ -21,14 +22,12 @@ func Encode(prefix byte, byteData []byte) string {
 	hash2 := sha256.Sum256(hash[:])
 
 	//First 4 bytes if this double-sha'd byte array is the checksum
-	checksum := hash2[0:4]
-
 	//Append this checksum to the input bytes
-	encodedChecksum := append(encoded, checksum...)
+	encoded = append(encoded, hash2[0:4]...)
 
 	//Convert this checksum'd version to a big Int
 	bigIntEncodedChecksum := big.NewInt(0)
-	bigIntEncodedChecksum.SetBytes(encodedChecksum)
+	bigIntEncodedChecksum.SetBytes(encoded)
 
 	//Encode the big int checksum'd version into a Base58Checked string
 	base58EncodedChecksum := string(base58.EncodeBig(nil, bigIntEncodedChecksum))
@@ -41,23 +40,28 @@ func Encode(prefix byte, byteData []byte) string {
 	//base58 alone is not enough. We need to first count each of the zero bytes
 	//which are at the beginning of the encodedCheckSum
 
-	for _, v := range encodedChecksum {
+	for _, v := range encoded {
 		if v == 0 {
-			buffer.WriteByte('1')
+			if err := buffer.WriteByte('1'); err != nil {
+				log.Fatal(err)
+			}
 		} else {
 			break
 		}
 	}
 
-	buffer.WriteString(base58EncodedChecksum)
+	if _, err := buffer.WriteString(base58EncodedChecksum); err != nil {
+		log.Fatal(err)
+	}
 
 	return buffer.String()
 }
 
-func Decode(value string) ([]byte, bool, error) {
+//Decode decodes base58 value to bytes.
+func Decode(value string) ([]byte, error) {
 	publicKeyInt, err := base58.DecodeToBig([]byte(value))
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	encodedChecksum := publicKeyInt.Bytes()
@@ -68,13 +72,17 @@ func Decode(value string) ([]byte, bool, error) {
 	var buffer bytes.Buffer
 	for _, v := range value {
 		if v == '1' {
-			buffer.WriteByte(0)
+			if err := buffer.WriteByte(0); err != nil {
+				log.Fatal(err)
+			}
 		} else {
 			break
 		}
 	}
 
-	buffer.Write(encoded)
+	if _, err := buffer.Write(encoded); err != nil {
+		log.Fatal(err)
+	}
 
 	result := buffer.Bytes()
 
@@ -86,8 +94,5 @@ func Decode(value string) ([]byte, bool, error) {
 		log.Println(value, "warn:", "checksum not matched", "embeded cksum:", hex.EncodeToString(cksum), "cksum:", hex.EncodeToString(hash2[:4]))
 	}
 
-	if value[0] == 'K' || value[0] == 'L' || value[0] == 'c' {
-		return result[0 : len(result)-1], true, err
-	}
-	return result, false, err
+	return result, err
 }

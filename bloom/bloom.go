@@ -72,7 +72,7 @@ func (b Bloom) Insert(data []byte) {
 	}
 }
 
-//Codes below comes from https://github.com/spaolacci/murmur3/blob/master/murmur32.go
+//Codes below is from https://github.com/spaolacci/murmur3/blob/master/murmur32.go
 /*
 Copyright 2013, Sébastien Paolacci.
 All rights reserved.

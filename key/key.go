@@ -29,7 +29,6 @@
 package key
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"log"
@@ -42,13 +41,13 @@ import (
 
 //PublicKey represents public key for bitcoin
 type PublicKey struct {
-	key          *btcec.PublicKey
+	*btcec.PublicKey
 	isCompressed bool
 }
 
 //PrivateKey represents private key for bitcoin
 type PrivateKey struct {
-	key *btcec.PrivateKey
+	*btcec.PrivateKey
 }
 
 //Key includes PublicKey and PrivateKey.
@@ -64,65 +63,74 @@ func GetPublicKey(pubKeyByte []byte) (*PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &PublicKey{key: key}, nil
+	isCompressed := false
+	if len(pubKeyByte) == btcec.PubKeyBytesLenCompressed {
+		isCompressed = true
+	}
+	return &PublicKey{PublicKey: key, isCompressed: isCompressed}, nil
 }
 
 //GetKeyFromWIF gets PublicKey and PrivateKey from private key of WIF format.
 func GetKeyFromWIF(wif string) (*Key, error) {
 	secp256k1 := btcec.S256()
-	pb, isCmpressed, err := base58check.Decode(wif)
+	pb, err := base58check.Decode(wif)
 	if err != nil {
 		return nil, err
 	}
 
-	pub := PublicKey{}
-	priv := PrivateKey{}
-	key := Key{
-		Pub:  &pub,
-		Priv: &priv,
-	}
 	if pb[0] != params.DumpedPrivateKeyHeader && pb[0] != params.DumpedPrivateKeyHeaderAlt {
 		return nil, errors.New("private key is not for " + params.ID)
 	}
-	pub.isCompressed = isCmpressed
+	isCompressed := false
+	if len(pb) == btcec.PrivKeyBytesLen+2 && pb[btcec.PrivKeyBytesLen+1] == 0x01 {
+		pb = pb[:len(pb)-1]
+		isCompressed = true
+		log.Println("compressed")
+	}
 
 	//Get the raw public
-	priv.key, pub.key = btcec.PrivKeyFromBytes(secp256k1, pb[1:])
+	priv, pub := btcec.PrivKeyFromBytes(secp256k1, pb[1:])
 
+	pubk := PublicKey{PublicKey: pub, isCompressed: isCompressed}
+	privk := PrivateKey{PrivateKey: priv}
+	key := Key{
+		Pub:  &pubk,
+		Priv: &privk,
+	}
 	return &key, nil
 
 }
 
 //GenerateKey generates random PublicKey and PrivateKey.
-func GenerateKey(flagTestnet bool) (*Key, error) {
-	seed := make([]byte, 32)
-	_, err := rand.Read(seed)
+func GenerateKey() (*Key, error) {
+	secp256k1 := btcec.S256()
+	prikey, err := btcec.NewPrivateKey(secp256k1)
 	if err != nil {
 		return nil, err
 	}
-	s256 := btcec.S256()
-
-	private := PrivateKey{}
-	public := PublicKey{}
-	private.key, public.key = btcec.PrivKeyFromBytes(s256, seed)
 	key := Key{
-		Pub:  &public,
-		Priv: &private,
+		Pub: &PublicKey{
+			PublicKey:    prikey.PubKey(),
+			isCompressed: true,
+		},
+		Priv: &PrivateKey{
+			PrivateKey: prikey,
+		},
 	}
 
 	//Print the keys
 	log.Println("Your private key in WIF is")
-	log.Println(private.GetWIFAddress())
+	log.Println(key.GetWIFAddress())
 
 	log.Println("Your address is")
-	log.Println(public.GetAddress())
+	log.Println(key.Pub.GetAddress())
 
 	return &key, nil
 }
 
 //Sign sign data.
 func (priv *PrivateKey) Sign(hash []byte) ([]byte, error) {
-	sig, err := priv.key.Sign(hash)
+	sig, err := priv.PrivateKey.Sign(hash)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +144,7 @@ func (key *Key) SignMessage(hash []byte) ([]byte, error) {
 	h := sha256.Sum256(msg)
 	hh := sha256.Sum256(h[:])
 	s256 := btcec.S256()
-	sig, err := btcec.SignCompact(s256, key.Priv.key, hh[:], key.Pub.isCompressed)
+	sig, err := btcec.SignCompact(s256, key.Priv.PrivateKey, hh[:], key.Pub.isCompressed)
 	if err != nil {
 		return nil, err
 	}
@@ -144,20 +152,32 @@ func (key *Key) SignMessage(hash []byte) ([]byte, error) {
 }
 
 //GetWIFAddress returns WIF format string from PrivateKey
-func (priv *PrivateKey) GetWIFAddress() string {
-	return base58check.Encode(params.DumpedPrivateKeyHeader, priv.key.Serialize())
+func (key *Key) GetWIFAddress() string {
+	return key.Priv.GetWIFAddress(key.Pub.isCompressed)
+}
+
+//GetWIFAddress returns WIF format string from PrivateKey
+func (priv *PrivateKey) GetWIFAddress(isCompressed bool) string {
+	p := priv.Serialize()
+	if isCompressed {
+		p = append(p, 0x1)
+	}
+	return base58check.Encode(params.DumpedPrivateKeyHeader, p)
+}
+
+//Serialize serializes public key depending on isCompressed.
+func (pub *PublicKey) Serialize() []byte {
+	if pub.isCompressed {
+		return pub.SerializeCompressed()
+	}
+	return pub.SerializeUncompressed()
 }
 
 //GetAddress returns bitcoin address from PublicKey
 func (pub *PublicKey) GetAddress() (string, []byte) {
 	//Next we get a sha256 hash of the public key generated
 	//via ECDSA, and then get a ripemd160 hash of the sha256 hash.
-	var shadPublicKeyBytes [32]byte
-	if pub.isCompressed {
-		shadPublicKeyBytes = sha256.Sum256(pub.key.SerializeCompressed())
-	} else {
-		shadPublicKeyBytes = sha256.Sum256(pub.key.SerializeUncompressed())
-	}
+	shadPublicKeyBytes := sha256.Sum256(pub.Serialize())
 
 	ripeHash := ripemd160.New()
 	if _, err := ripeHash.Write(shadPublicKeyBytes[:]); err != nil {
@@ -165,6 +185,7 @@ func (pub *PublicKey) GetAddress() (string, []byte) {
 	}
 	ripeHashedBytes := ripeHash.Sum(nil)
 
-	publicKeyEncoded := base58check.Encode(params.AddressHeader, ripeHashedBytes)
+	publicKeyEncoded := base58check.Encode(params.AddressHeader,
+		ripeHashedBytes)
 	return publicKeyEncoded, ripeHashedBytes
 }

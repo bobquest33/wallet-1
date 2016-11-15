@@ -26,77 +26,85 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package tx
+package key
 
 import (
-	"math/big"
-
-	"crypto/sha256"
+	"bytes"
 	"log"
-
-	"github.com/monarj/wallet/msg"
+	"sync"
 )
 
-var zero = new(big.Int)
+var (
+	//list is a keylist.
+	list []*Key
 
-type merkle struct {
-	height int
-	hashes []msg.Hash
-	nHash  int
-	tx     []msg.Hash
-	flags  *big.Int
-	mask   *big.Int
+	mutex sync.RWMutex
+)
+
+//New creates , registers , and returns a randome key.
+func New() *Key {
+	mutex.Lock()
+	defer mutex.Unlock()
+	k, err := GenerateKey()
+	if err != nil {
+		log.Fatal(err)
+	}
+	Add(k)
+	return k
 }
 
-func (m *merkle) ope(stair int) msg.Hash {
-	tmp := new(big.Int)
-	switch tmp.And(m.flags, m.mask).Cmp(zero) == 0 {
-	case true:
-		m.nHash++
-		return m.hashes[m.nHash-1]
-	default:
-		if stair == m.height {
-			m.tx = append(m.tx, m.hashes[m.nHash])
-			m.nHash++
-			return m.hashes[m.nHash-1]
+//HasPubkey returns true if list has pub.
+func HasPubkey(pub *PublicKey) bool {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	for _, k := range list {
+		if pub.IsEqual(k.Pub.PublicKey) {
+			return true
 		}
-		m.mask.Lsh(m.mask, 1)
-		hleft := m.ope(stair + 1)
-		m.mask.Lsh(m.mask, 1)
-		hright := m.ope(stair + 1)
-		h := sha256.New()
-		if _, err := h.Write(hleft.Hash); err != nil {
-			log.Fatal(err)
-		}
-		if _, err := h.Write(hright.Hash); err != nil {
-			log.Fatal(err)
-		}
-		s := h.Sum(nil)
-		return msg.Hash{Hash: s[:]}
 	}
+	return false
 }
 
-//MerkleRoot returns root hash of merkle.
-func MerkleRoot(n uint32, hashes []msg.Hash, flags []byte) []byte {
-	var height, count int
-	//faster than log2?
-	for height, count = 0, 1; count < int(n); height++ {
-		count *= 2
+//HasPubHash returns true if list has pubhash pubkey.
+func HasPubHash(pubhash []byte) (*PublicKey, bool) {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	for _, k := range list {
+		_, hash := k.Pub.GetAddress()
+		if bytes.Equal(pubhash, hash) {
+			return k.Pub, true
+		}
 	}
-	f := new(big.Int)
-	f.SetBytes(flags)
-	mm := make([]byte, len(flags))
-	mm[0] = 0x80
-	mask := new(big.Int)
-	mask.SetBytes(mm)
-	tmp := new(big.Int)
-	for ; tmp.And(f, mask).Cmp(zero) == 0; mask.Lsh(mask, 1) {
+	return nil, false
+}
+
+//Add adds key to key list.
+func Add(k *Key) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	list = append(list, k)
+}
+
+//Get gets key list.
+func Get() []*Key {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	l := make([]*Key, len(list))
+	copy(l, list)
+	return l
+}
+
+//Remove removes the key from key list.
+func Remove(k *Key) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	for i, kl := range list {
+		s1, _ := k.Pub.GetAddress()
+		s2, _ := kl.Pub.GetAddress()
+		if s1 == s2 {
+			list = append(list[:i], list[i+1:]...)
+			list[len(list)-1] = nil
+			return
+		}
 	}
-	m := merkle{
-		height: height,
-		hashes: hashes,
-		flags:  f,
-		mask:   mask,
-	}
-	return m.ope(0).Hash
 }

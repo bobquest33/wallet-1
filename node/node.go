@@ -121,7 +121,6 @@ func (n *Node) Loop() error {
 		"inv":         n.readInv,
 		"headers":     n.readHeaders,
 		"merkleblock": n.readMerkle,
-		"tx":          n.readTx,
 	}
 	for {
 		cmd, payload, err := n.readMessage()

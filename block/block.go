@@ -66,11 +66,19 @@ func init() {
 	}
 	genesis = &Block{
 		block:  &g,
-		height: 0,
+		Height: 0,
 	}
 	lastBlock = genesis
 	tails[string(hg)] = genesis
 	blocks[string(hg)] = genesis
+}
+
+//Last returns last block.
+func Last() *Block {
+	mutex.RLock()
+	defer mutex.RUnlock()
+
+	return lastBlock
 }
 
 //Has returns true if hash is in blocks.
@@ -84,7 +92,7 @@ func Has(hash []byte) bool {
 //Block is block header with height.
 type Block struct {
 	block  *msg.BlockHeader
-	height int
+	Height int
 }
 
 //Add adds blocks to the chain and returns hashes of these.
@@ -94,7 +102,12 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	for i, b := range mbs.Inventory {
-		if err := b.IsOK(); err != nil {
+		p, ok := blocks[string(b.Prev)]
+		if !ok {
+			log.Print(i)
+			return hashes, errors.New("orphan block " + behex.EncodeToString(b.Prev))
+		}
+		if err := b.IsOK(p.Height + 1); err != nil {
 			return hashes, err
 		}
 		h := b.Hash()
@@ -104,12 +117,7 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 		block := Block{
 			block: &b,
 		}
-		p, ok := blocks[string(b.Prev)]
-		if !ok {
-			log.Print(i)
-			return hashes, errors.New("orphan block " + behex.EncodeToString(b.Prev))
-		}
-		block.height = p.height + 1
+		block.Height = p.Height + 1
 		blocks[string(h)] = &block
 		tails[string(h)] = &block
 		hashes[i] = h
@@ -124,11 +132,11 @@ func updateTails(block *Block) {
 			delete(tails, k)
 		}
 	}
-	if lastBlock.height < block.height {
+	if lastBlock.Height < block.Height {
 		lastBlock = block
 	}
 	for k, v := range tails {
-		if v.height < lastBlock.height-params.Nconfirmed {
+		if v.Height < lastBlock.Height-params.Nconfirmed {
 			delete(tails, k)
 		}
 	}

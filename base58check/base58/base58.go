@@ -23,13 +23,14 @@ func init() {
 	}
 }
 
+//CorruptInputError representds input is corrupted.
 type CorruptInputError int64
 
 func (e CorruptInputError) Error() string {
 	return "illegal base58 data at input byte " + strconv.FormatInt(int64(e), 10)
 }
 
-// Decode a big integer from the bytes. Returns an error on corrupt
+// DecodeToBig a big integer from the bytes. Returns an error on corrupt
 // input.
 func DecodeToBig(src []byte) (*big.Int, error) {
 	n := new(big.Int)
@@ -45,7 +46,7 @@ func DecodeToBig(src []byte) (*big.Int, error) {
 	return n, nil
 }
 
-// Encode encodes src, appending to dst. Be sure to use the returned
+// EncodeBig encodes src, appending to dst. Be sure to use the returned
 // new value of dst.
 func EncodeBig(dst []byte, src *big.Int) []byte {
 	start := len(dst)
