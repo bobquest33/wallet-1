@@ -38,20 +38,20 @@ import (
 )
 
 func TestKeys2(t *testing.T) {
-	key, err := GenerateKey()
+	key, err := Generate()
 	if err != nil {
 		t.Errorf(err.Error())
 	}
-	adr, _ := key.Pub.GetAddress()
+	adr, _ := key.Address()
 	log.Println("address=", adr)
-	wif := key.GetWIFAddress()
+	wif := key.WIFAddress()
 	log.Println("wif=", wif)
 
-	key2, err := GetKeyFromWIF(wif)
+	key2, err := FromWIF(wif)
 	if err != nil {
 		t.Errorf(err.Error())
 	}
-	adr2, _ := key2.Pub.GetAddress()
+	adr2, _ := key2.Address()
 	log.Println("address2=", adr2)
 
 	if adr != adr2 {
@@ -60,43 +60,48 @@ func TestKeys2(t *testing.T) {
 }
 
 func TestKeys(t *testing.T) {
-	key, err := GenerateKey()
+	key, err := Generate()
 	if err != nil {
 		t.Errorf(err.Error())
 	}
-	adr, _ := key.Pub.GetAddress()
+	adr, _ := key.Address()
 	log.Println("address=", adr)
-	wif := key.GetWIFAddress()
+	wif := key.WIFAddress()
 	log.Println("wif=", wif)
 
-	key2, err := GetKeyFromWIF(wif)
+	key2, err := FromWIF(wif)
 	if err != nil {
 		t.Errorf(err.Error())
 	}
-	adr2, _ := key2.Pub.GetAddress()
+	adr2, _ := key2.Address()
 	log.Println("address2=", adr2)
 
 	if adr != adr2 {
 		t.Errorf("key unmatched")
 	}
-
 }
 
 func TestKeys3(t *testing.T) {
-	private := PrivateKey{}
-	public := PublicKey{}
 	seed := make([]byte, 32)
 	_, err := hex.Decode(seed, []byte("3954e0c9a3ce58a8dca793e214232e569ff0cb9da79689ca56d0af614227d540"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s256 := btcec.S256()
-	private.PrivateKey, public.PublicKey = btcec.PrivKeyFromBytes(s256, seed)
-	wif := private.GetWIFAddress(false)
+	priv, pub := btcec.PrivKeyFromBytes(s256, seed)
+	public := PublicKey{
+		PublicKey:    pub,
+		isCompressed: false,
+	}
+	private := PrivateKey{
+		PrivateKey: priv,
+		PublicKey:  &public,
+	}
+	wif := private.WIFAddress()
 	if wif != "6ySkrpLpwm6gKsWo2aS6EL1SZxidZNdJkKqsKRNjXzv9WSrpHjR" {
 		t.Errorf("wif not match %s", wif)
 	}
-	adr, _ := public.GetAddress()
+	adr, _ := public.Address()
 	if adr != "MB3D45ngvaWRcACUmAFUf6fzcdXR8bVM6k" {
 		t.Errorf("address not match %s", adr)
 	}

@@ -26,55 +26,69 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package server
+package node
 
 import (
 	"fmt"
 	"log"
+	"sync"
+
 	"net"
 
-	"github.com/monarj/wallet/node"
 	"github.com/monarj/wallet/params"
 )
 
-func Start() (net.Listener, chan error, error) {
-	port := fmt.Sprintf(":%d", params.Port)
-	tcpAddr, err := net.ResolveTCPAddr("tcp", port)
-	if err != nil {
-		log.Println(err)
-		return nil, nil, err
-	}
-	listener, err := net.ListenTCP("tcp", tcpAddr)
-	if err != nil {
-		log.Println(err)
-		return nil, nil, err
-	}
-	ch := make(chan error)
-	go func() {
-		for {
-			conn, err := listener.AcceptTCP()
-			switch err {
-			case nil:
-				go handle(conn)
-			default:
-				ch <- err
+//Nodes represents nodes.
+var Nodes []*net.TCPAddr
+
+var alive []*Node
+
+var mutex sync.RWMutex
+
+const (
+	maxNodes = 10
+)
+
+//Resolve resolvs node addresses from the dns seed.
+func Resolve() {
+	var wg sync.WaitGroup
+	for _, dns := range params.DNSSeeds {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ns, err := net.LookupHost(dns)
+			if err != nil {
+				log.Println(err)
 				return
 			}
-		}
-	}()
-	return listener, ch, nil
+			for _, addr := range ns {
+				log.Println("adding node", addr)
+				n, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", addr, params.Port))
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				mutex.Lock()
+				Nodes = append(Nodes, n)
+				mutex.Unlock()
+			}
+		}()
+		wg.Wait()
+	}
 }
 
-func handle(conn *net.TCPConn) {
-	log.Println("client is accepted from ", conn.RemoteAddr().String())
-	n := node.New(conn)
-	if err := n.Handshake(); err != nil {
-		log.Println(err)
-		n.Close()
-		return
-	}
-	if err := n.Loop(); err != nil {
-		log.Println(err)
-		n.Close()
+//ConnectAll connects to at most 10 nodes.
+func ConnectAll() {
+	for _, n := range Nodes {
+		log.Println("connecting ", n.String())
+		nn, err := Connect(n)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		alive = append(alive, nn)
+		if len(alive) > maxNodes {
+			return
+		}
 	}
 }

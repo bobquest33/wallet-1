@@ -36,16 +36,16 @@ import (
 
 var (
 	//list is a keylist.
-	list []*Key
+	list []*PrivateKey
 
 	mutex sync.RWMutex
 )
 
 //New creates , registers , and returns a randome key.
-func New() *Key {
+func New() *PrivateKey {
 	mutex.Lock()
 	defer mutex.Unlock()
-	k, err := GenerateKey()
+	k, err := Generate()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func HasPubkey(pub *PublicKey) bool {
 	mutex.RLock()
 	defer mutex.RUnlock()
 	for _, k := range list {
-		if pub.IsEqual(k.Pub.PublicKey) {
+		if pub.IsEqual(k.PublicKey.PublicKey) {
 			return true
 		}
 	}
@@ -70,37 +70,37 @@ func HasPubHash(pubhash []byte) (*PublicKey, bool) {
 	mutex.RLock()
 	defer mutex.RUnlock()
 	for _, k := range list {
-		_, hash := k.Pub.GetAddress()
+		_, hash := k.PublicKey.Address()
 		if bytes.Equal(pubhash, hash) {
-			return k.Pub, true
+			return k.PublicKey, true
 		}
 	}
 	return nil, false
 }
 
 //Add adds key to key list.
-func Add(k *Key) {
+func Add(k *PrivateKey) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	list = append(list, k)
 }
 
 //Get gets key list.
-func Get() []*Key {
+func Get() []*PrivateKey {
 	mutex.RLock()
 	defer mutex.RUnlock()
-	l := make([]*Key, len(list))
+	l := make([]*PrivateKey, len(list))
 	copy(l, list)
 	return l
 }
 
 //Remove removes the key from key list.
-func Remove(k *Key) {
+func Remove(k *PrivateKey) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	for i, kl := range list {
-		s1, _ := k.Pub.GetAddress()
-		s2, _ := kl.Pub.GetAddress()
+		s1, _ := k.PublicKey.Address()
+		s2, _ := kl.PublicKey.Address()
 		if s1 == s2 {
 			list = append(list[:i], list[i+1:]...)
 			list[len(list)-1] = nil

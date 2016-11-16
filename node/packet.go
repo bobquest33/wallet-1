@@ -172,8 +172,8 @@ func (n *Node) writeFilterload() error {
 	bf := bloom.New()
 	klist := key.Get()
 	for _, k := range klist {
-		_, adr := k.Pub.GetAddress()
-		bf.Insert(k.Pub.Serialize())
+		_, adr := k.Address()
+		bf.Insert(k.PublicKey.Serialize())
 		bf.Insert(adr)
 	}
 	aa := make([]byte, 512)
@@ -264,7 +264,7 @@ func (n *Node) readTx(payload io.Reader, txs []msg.Hash) error {
 	}
 	ok := false
 	for _, tx := range txs {
-		if !bytes.Equal(p.Hash(), tx.Hash) {
+		if bytes.Equal(p.Hash(), tx.Hash) {
 			ok = true
 			break
 		}
@@ -281,7 +281,7 @@ func (n *Node) readMerkle(payload io.Reader) error {
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
 	}
-	log.Println(p.Total)
+	log.Println(behex.EncodeToString(p.Hash()))
 	txs, err := p.FilteredTx()
 	if err != nil {
 		return err

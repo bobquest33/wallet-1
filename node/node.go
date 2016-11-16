@@ -33,6 +33,7 @@ import (
 	"log"
 	"net"
 
+	"encoding/hex"
 	"io"
 	"time"
 )
@@ -124,6 +125,7 @@ func (n *Node) Loop() error {
 	}
 	for {
 		cmd, payload, err := n.readMessage()
+		log.Println(hex.EncodeToString(payload.Bytes()))
 		if err = n.errHandle(err); err != nil {
 			return n.errClose(err)
 		}

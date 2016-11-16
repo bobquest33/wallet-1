@@ -26,70 +26,19 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package manager
+package node
 
 import (
-	"fmt"
+	"testing"
+	"time"
+
 	"log"
-	"sync"
-
-	"net"
-
-	"github.com/monarj/wallet/node"
-	"github.com/monarj/wallet/params"
 )
 
-//Nodes represents nodes.
-var Nodes []*net.TCPAddr
+func TestServer(t *testing.T) {
+	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
 
-var alive []*node.Node
-
-var mutex sync.RWMutex
-
-const (
-	maxNodes = 10
-)
-
-//Resolve resolvs node addresses from the dns seed.
-func Resolve() {
-	var wg sync.WaitGroup
-	for _, dns := range params.DNSSeeds {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ns, err := net.LookupHost(dns)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			for _, addr := range ns {
-				log.Println("adding node", addr)
-				n, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", addr, params.Port))
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				mutex.Lock()
-				Nodes = append(Nodes, n)
-				mutex.Unlock()
-			}
-		}()
-		wg.Wait()
-	}
-}
-
-//ConnectAll connects to at most 10 nodes.
-func ConnectAll() {
-	for _, n := range Nodes {
-		log.Println("connecting ", n.String())
-		nn, err := node.Connect(n)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		alive = append(alive, nn)
-		if len(alive) > maxNodes {
-			return
-		}
-	}
+	Resolve()
+	ConnectAll()
+	time.Sleep(5 * time.Minute)
 }

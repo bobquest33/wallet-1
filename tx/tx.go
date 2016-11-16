@@ -37,6 +37,7 @@ import (
 
 	"fmt"
 
+	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/key"
 	"github.com/monarj/wallet/msg"
 )
@@ -70,9 +71,10 @@ type Coin struct {
 	TxHash  []byte
 	TxIndex uint32
 	Value   uint64
+	Ttype   int
 }
 
-func add(pub *key.PublicKey, tx *msg.Tx, index uint32) {
+func add(pub *key.PublicKey, tx *msg.Tx, index uint32, ttype int) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	a := pub.Serialize()
@@ -81,26 +83,30 @@ func add(pub *key.PublicKey, tx *msg.Tx, index uint32) {
 		TxHash:  tx.Hash(),
 		TxIndex: index,
 		Value:   tx.TxOut[index].Value,
+		Ttype:   ttype,
 	}
 	coins[string(a)] = append(coins[string(a)], c)
 }
 
-func remove(pub *key.PublicKey, hash []byte, index uint32) {
+func remove(pub *key.PublicKey, hash []byte, index uint32) error {
 	mutex.Lock()
 	defer mutex.Unlock()
 	a := string(pub.Serialize())
 	coin := coins[a]
 	for i, c := range coin {
 		if bytes.Equal(c.TxHash, hash) && c.TxIndex == index {
-			copy(coin[i:], coin[:i+1])
+			coin[i] = coin[len(coin)-1]
 			coin[len(coin)-1] = nil
 			coin = coin[:len(coin)-1]
+			coins[a] = coin
+			return nil
 		}
 	}
+	return errors.New("coin was not found")
 }
 
-//ScriptSig is the default scriptsig this program supports.
-type ScriptSig struct {
+//ScriptSigH is the header of scriptsig this program supports.
+type ScriptSigH struct {
 	SigLength byte
 	Prefix30  byte
 	RSLength  byte
@@ -108,27 +114,38 @@ type ScriptSig struct {
 	RLength   byte
 	R         []byte `len:"var"`
 	PrefixL02 byte
-	LLength   byte
-	L         []byte `len:"var"`
+	SLength   byte
+	S         []byte `len:"var"`
+}
+
+//ScriptSigT is the tail of  scriptsig this program supports.
+type ScriptSigT struct {
 	Postfix01 byte
-	PubLength byte
+	Length    byte
 	Pubkey    []byte `len:"var"`
 }
 
 //Script the default out scrip this program supports.
 type Script struct {
-	Dup        byte
-	Hash160    byte
-	HashLength byte
-	PubHash    []byte `len:"20"`
-	Equal      byte
-	CheckSig   byte
+	Dup         byte
+	Hash160     byte
+	HashLength  byte
+	PubHash     []byte `len:"20"`
+	EqualVerify byte
+	CheckSig    byte
+}
+
+//Script2 is anotther out scrip this program supports.
+type Script2 struct {
+	Length   byte
+	Pubkey   []byte `len:"var"`
+	CheckSig byte
 }
 
 func parse(s interface{}, data []byte) error {
 	buf := bytes.NewBuffer(data)
-	if err := msg.Unpack(buf, &s); err != nil {
-		return fmt.Errorf("this tx is not supported")
+	if err := msg.Unpack(buf, s); err != nil {
+		return fmt.Errorf("this tx is not supported(unknown format) %s", err)
 	}
 	if buf.Len() != 0 {
 		return fmt.Errorf("this tx is not supported")
@@ -136,57 +153,106 @@ func parse(s interface{}, data []byte) error {
 	return nil
 }
 
-//Add adds or removes transanctions from a tx packet.
-func Add(mtx *msg.Tx) error {
-	if mtx.Locktime != 0xffffffff {
-		return errors.New("locktime is not supported")
+func parseScriptsigH(data []byte) (*bytes.Buffer, error) {
+	s := ScriptSigH{}
+	buf := bytes.NewBuffer(data)
+	if err := msg.Unpack(buf, &s); err != nil {
+		return nil, errors.New("this tx is not supported(unknown format)")
 	}
-	for _, in := range mtx.TxIn {
-		s := ScriptSig{}
-		if err := parse(&s, in.Script); err != nil {
-			log.Println(err, mtx.Hash())
-			continue
-		}
-		pubkey, err := checkTxin(&s)
-		if err != nil {
-			return err
-		}
-		remove(pubkey, in.Hash, in.Index)
-
+	if buf.Len() == 0 {
+		return nil, errors.New("old type of scriptsig, ignoring")
 	}
-	for i, in := range mtx.TxOut {
-		s := Script{}
-		if err := parse(&s, in.Script); err != nil {
-			log.Println(err, mtx.Hash())
-			continue
-		}
-		pubkey, err := checkTxout(&s)
-		if err != nil {
-			log.Println(err, mtx.Hash())
-			continue
-		}
-		add(pubkey, mtx, uint32(i))
-	}
-	return nil
-}
-
-func checkTxin(s *ScriptSig) (*key.PublicKey, error) {
 	switch {
 	case s.Prefix30 != 0x30:
 		fallthrough
 	case s.PrefixR02 != 0x02:
 		fallthrough
 	case s.PrefixL02 != 0x02:
-		fallthrough
-	case s.Postfix01 != 0x01:
 		return nil, errors.New("unsuported scriptsig")
 	}
-	pubkey, err := key.GetPublicKey(s.Pubkey)
+	return buf, nil
+}
+
+func parseScriptsigT(buf *bytes.Buffer, data []byte) (*ScriptSigT, error) {
+	s := ScriptSigT{}
+	if err := msg.Unpack(buf, &s); err != nil {
+		return nil, errors.New("this tx is not supported(unknown format)")
+	}
+	if buf.Len() != 0 {
+		return nil, fmt.Errorf("this tx is not supported")
+	}
+	return &s, nil
+}
+
+//Add adds or removes transanctions from a tx packet.
+func Add(mtx *msg.Tx) error {
+	for _, in := range mtx.TxIn {
+		zero := make([]byte, 32)
+		if bytes.Equal(in.Hash, zero) && in.Index == 0xffffffff {
+			log.Println("coinbase")
+			continue
+		}
+		buf, err := parseScriptsigH(in.Script)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		s, err := parseScriptsigT(buf, in.Script)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		pubkey, err := checkTxin(s)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		if err := remove(pubkey, in.Hash, in.Index); err != nil {
+			log.Println(err)
+		}
+	}
+	for i, in := range mtx.TxOut {
+		s := Script{}
+		err := parse(&s, in.Script)
+		s2 := Script2{}
+		err2 := parse(&s2, in.Script)
+
+		var pubkey *key.PublicKey
+		var err3 error
+		var ttype int
+		switch {
+		case err == nil:
+			log.Println("pubkeyhash scriptsig")
+			pubkey, err3 = checkTxout(&s)
+			ttype = 0
+		case err2 == nil:
+			log.Println("pubkey scriptsig")
+			pubkey, err3 = checkTxout2(&s2)
+			ttype = 1
+		default:
+			log.Println(err, err2)
+			err3 = fmt.Errorf("This txout is not supproted")
+		}
+		if err3 != nil {
+			log.Println(err3, behex.EncodeToString(mtx.Hash()))
+			continue
+		}
+		add(pubkey, mtx, uint32(i), ttype)
+	}
+	return nil
+}
+
+func checkTxin(s *ScriptSigT) (*key.PublicKey, error) {
+	if s.Postfix01 != 0x01 {
+		return nil, errors.New("unsuported scriptsig")
+	}
+	pubkey, err := key.NewPublicKey(s.Pubkey)
 	if err != nil {
 		return nil, err
 	}
-	if key.HasPubkey(pubkey) {
-		return nil, errors.New("not concerened address")
+	if !key.HasPubkey(pubkey) {
+		adr, _ := pubkey.Address()
+		return nil, errors.New("not concerened address " + adr)
 	}
 	return pubkey, nil
 }
@@ -199,7 +265,7 @@ func checkTxout(s *Script) (*key.PublicKey, error) {
 		fallthrough
 	case s.HashLength != 0x14:
 		fallthrough
-	case s.Equal != opEQUAL:
+	case s.EqualVerify != opEQUALVERIFY:
 		fallthrough
 	case s.CheckSig != opCHECKSIG:
 		return nil, errors.New("unsuported scriptsig")
@@ -207,6 +273,21 @@ func checkTxout(s *Script) (*key.PublicKey, error) {
 	pubkey, has := key.HasPubHash(s.PubHash)
 	if !has {
 		return nil, errors.New("not concerened address")
+	}
+	return pubkey, nil
+}
+
+func checkTxout2(s *Script2) (*key.PublicKey, error) {
+	if s.CheckSig != opCHECKSIG {
+		return nil, errors.New("unsuported scriptsig")
+	}
+	pubkey, err := key.NewPublicKey(s.Pubkey)
+	if err != nil {
+		return nil, err
+	}
+	if !key.HasPubkey(pubkey) {
+		adr, _ := pubkey.Address()
+		return nil, errors.New("not concerened address" + adr)
 	}
 	return pubkey, nil
 }

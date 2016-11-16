@@ -33,7 +33,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"reflect"
 	"strconv"
 )
@@ -181,7 +180,6 @@ func Unpack(buf io.Reader, t interface{}) error {
 				return err
 			}
 			if _, err := io.ReadFull(buf, dat); err != nil {
-				log.Println(err)
 				return err
 			}
 			result = dat

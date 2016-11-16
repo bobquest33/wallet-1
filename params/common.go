@@ -62,10 +62,10 @@ const (
 	UserAgent = "/monarj:" + Version + "/"
 	//Nconfirmed is the block height block is regarded as confirmed.
 	Nconfirmed = 5
-	//BTC is unit to convert BTC to satoshi
-	BTC = 100000000
+	//Unit is base unit.
+	Unit = 100000000
 	//Fee for a transaction
-	Fee = uint64(0.0005 * BTC) //  0.5m BTC/kB
+	Fee = uint64(0.001 * Unit) //  1m MONA/kB
 )
 
 //TODO

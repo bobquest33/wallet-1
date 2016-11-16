@@ -98,7 +98,7 @@ type Block struct {
 //Add adds blocks to the chain and returns hashes of these.
 //We must add blocks in height order.
 func Add(mbs msg.Headers) ([][]byte, error) {
-	hashes := make([][]byte, len(mbs.Inventory))
+	hashes := make([][]byte, 0, len(mbs.Inventory))
 	mutex.Lock()
 	defer mutex.Unlock()
 	for i, b := range mbs.Inventory {
@@ -120,7 +120,7 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 		block.Height = p.Height + 1
 		blocks[string(h)] = &block
 		tails[string(h)] = &block
-		hashes[i] = h
+		hashes = append(hashes, h)
 		updateTails(&block)
 	}
 	return hashes, nil

@@ -26,6 +26,7 @@ func init() {
 //CorruptInputError representds input is corrupted.
 type CorruptInputError int64
 
+//Error is to implement Error interface.
 func (e CorruptInputError) Error() string {
 	return "illegal base58 data at input byte " + strconv.FormatInt(int64(e), 10)
 }

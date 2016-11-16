@@ -26,31 +26,17 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package server
+package node
 
 import (
-	"testing"
-	"time"
-
 	"log"
-
-	"github.com/monarj/wallet/node/manager"
+	"testing"
 )
 
-func TestServer(t *testing.T) {
-	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
-	l, ch, err := Start()
-	if err != nil {
-		t.Fatal(err)
+func TestManager(t *testing.T) {
+	Resolve()
+	if len(Nodes) == 0 {
+		t.Fatal("cannot resolve.")
 	}
-	manager.Resolve()
-	manager.ConnectAll()
-	time.Sleep(5 * time.Minute)
-	if err = l.Close(); err != nil {
-		t.Fatal(err)
-	}
-	err = <-ch
-	if err != nil {
-		t.Log(err)
-	}
+	log.Println("length=", len(Nodes))
 }
