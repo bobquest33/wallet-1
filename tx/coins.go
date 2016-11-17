@@ -31,6 +31,7 @@ package tx
 import (
 	"errors"
 	"log"
+	"sort"
 	"sync"
 
 	"bytes"
@@ -65,25 +66,44 @@ func (c Coins) Swap(i, j int) {
 	c[i], c[j] = c[j], c[i]
 }
 
-//Coin represents an available transaction.
-type Coin struct {
-	Addr    []byte
-	TxHash  []byte
-	TxIndex uint32
-	Value   uint64
-	Ttype   int
+//SortedCoins returns value-sorted coins that cointans all address.
+func SortedCoins() Coins {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	var c Coins
+	for _, v := range coins {
+		c = append(c, v...)
+	}
+	sort.Sort(c)
+	return c
 }
 
-func add(pub *key.PublicKey, tx *msg.Tx, index uint32, ttype int) {
+//Coin represents an available transaction.
+type Coin struct {
+	Pubkey   []byte
+	TxHash   []byte
+	TxIndex  uint32
+	Value    uint64
+	Ttype    int
+	Height   int
+	Coinbase bool
+	Script   []byte
+}
+
+func add(pub *key.PublicKey, tx *msg.Tx, index uint32,
+	ttype int, height int, coinbase bool, script []byte) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	a := pub.Serialize()
 	c := &Coin{
-		Addr:    a,
-		TxHash:  tx.Hash(),
-		TxIndex: index,
-		Value:   tx.TxOut[index].Value,
-		Ttype:   ttype,
+		Pubkey:   a,
+		TxHash:   tx.Hash(),
+		TxIndex:  index,
+		Value:    tx.TxOut[index].Value,
+		Ttype:    ttype,
+		Height:   height,
+		Coinbase: coinbase,
+		Script:   script,
 	}
 	coins[string(a)] = append(coins[string(a)], c)
 }
@@ -185,12 +205,14 @@ func parseScriptsigT(buf *bytes.Buffer, data []byte) (*ScriptSigT, error) {
 }
 
 //Add adds or removes transanctions from a tx packet.
-func Add(mtx *msg.Tx) error {
+func Add(mtx *msg.Tx, height int) error {
+	coinbase := false
 	for _, in := range mtx.TxIn {
 		zero := make([]byte, 32)
 		if bytes.Equal(in.Hash, zero) && in.Index == 0xffffffff {
 			log.Println("coinbase")
-			continue
+			coinbase = true
+			break
 		}
 		buf, err := parseScriptsigH(in.Script)
 		if err != nil {
@@ -237,7 +259,7 @@ func Add(mtx *msg.Tx) error {
 			log.Println(err3, behex.EncodeToString(mtx.Hash()))
 			continue
 		}
-		add(pubkey, mtx, uint32(i), ttype)
+		add(pubkey, mtx, uint32(i), ttype, height, coinbase, in.Script)
 	}
 	return nil
 }
@@ -250,7 +272,7 @@ func checkTxin(s *ScriptSigT) (*key.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !key.HasPubkey(pubkey) {
+	if key.Find(pubkey) != nil {
 		adr, _ := pubkey.Address()
 		return nil, errors.New("not concerened address " + adr)
 	}
@@ -285,7 +307,7 @@ func checkTxout2(s *Script2) (*key.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !key.HasPubkey(pubkey) {
+	if key.Find(pubkey) != nil {
 		adr, _ := pubkey.Address()
 		return nil, errors.New("not concerened address" + adr)
 	}

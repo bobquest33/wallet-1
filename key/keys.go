@@ -53,16 +53,17 @@ func New() *PrivateKey {
 	return k
 }
 
-//HasPubkey returns true if list has pub.
-func HasPubkey(pub *PublicKey) bool {
+//Find returns privatekey from pub.
+//It returns nil if not found.
+func Find(pub *PublicKey) *PrivateKey {
 	mutex.RLock()
 	defer mutex.RUnlock()
 	for _, k := range list {
 		if pub.IsEqual(k.PublicKey.PublicKey) {
-			return true
+			return k
 		}
 	}
-	return false
+	return nil
 }
 
 //HasPubHash returns true if list has pubhash pubkey.

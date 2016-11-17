@@ -37,8 +37,6 @@ import (
 
 func TestServer(t *testing.T) {
 	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
-
-	Resolve()
-	ConnectAll()
+	Run()
 	time.Sleep(5 * time.Minute)
 }

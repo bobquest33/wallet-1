@@ -33,7 +33,6 @@ import (
 	"log"
 	"net"
 
-	"encoding/hex"
 	"io"
 	"time"
 )
@@ -66,23 +65,32 @@ func New(conn *net.TCPConn) *Node {
 
 //Connect connects to node ,send a version packet,
 //and returns Node struct.
-func Connect(addr *net.TCPAddr) (*Node, error) {
+func Connect(addr *net.TCPAddr) error {
 	conn, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
 		log.Println(err)
-		return nil, err
+		return err
 	}
 	n := &Node{conn: conn}
-	if err = n.Handshake(); err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	go func() {
-		if errr := n.Loop(); errr != nil {
+	mutex.Lock()
+	alive[n.String()] = n
+	mutex.Unlock()
+	log.Println("connecting ", n.String())
+	go func(nn *Node) {
+		defer func() {
+			mutex.Lock()
+			delete(alive, nn.String())
+			mutex.Unlock()
+		}()
+		if err = n.Handshake(); err != nil {
+			log.Println(err)
+			return
+		}
+		if errr := nn.Loop(); errr != nil {
 			log.Println(errr)
 		}
-	}()
-	return n, err
+	}(n)
+	return err
 }
 
 //String returns TCPConn.String() of Node n.
@@ -125,7 +133,6 @@ func (n *Node) Loop() error {
 	}
 	for {
 		cmd, payload, err := n.readMessage()
-		log.Println(hex.EncodeToString(payload.Bytes()))
 		if err = n.errHandle(err); err != nil {
 			return n.errClose(err)
 		}
@@ -133,6 +140,7 @@ func (n *Node) Loop() error {
 		f, exist := funcs[cmd]
 		if !exist {
 			log.Printf("%s:unknown or unsupported command", cmd)
+			n.mutex.Unlock()
 			continue
 		}
 		err = f(payload)
@@ -142,6 +150,7 @@ func (n *Node) Loop() error {
 		if err := n.setDeadline(); err != nil {
 			return n.errClose(err)
 		}
+		n.mutex.Unlock()
 	}
 }
 

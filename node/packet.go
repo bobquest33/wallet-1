@@ -203,12 +203,13 @@ func (n *Node) readInv(payload io.Reader) error {
 		log.Printf("msgtx %s", behex.EncodeToString(inv.Hash))
 		switch inv.Type {
 		case msg.MsgTX:
-			//TODO
+			//ignore because we cannot check the validity
 		case msg.MsgBlock:
 			if err := n.writeGetheaders(); err != nil {
 				return err
 			}
 		case msg.MsgFilterdBlock:
+		//can do nothing because of SPV.
 		default:
 			return fmt.Errorf("unknown inv type %d", inv.Type)
 		}
@@ -257,7 +258,7 @@ func (n *Node) readHeaders(payload io.Reader) error {
 	return nil
 }
 
-func (n *Node) readTx(payload io.Reader, txs []msg.Hash) error {
+func (n *Node) readTx(payload io.Reader, txs []msg.Hash, height int) error {
 	p := msg.Tx{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -272,7 +273,7 @@ func (n *Node) readTx(payload io.Reader, txs []msg.Hash) error {
 	if !ok {
 		return errors.New("no hash in txs")
 	}
-	err := tx.Add(&p)
+	err := tx.Add(&p, height)
 	return err
 }
 
@@ -289,7 +290,8 @@ func (n *Node) readMerkle(payload io.Reader) error {
 	if len(txs) == 0 {
 		return nil
 	}
-	if !block.Has(p.Hash()) {
+	height := block.Height(p.Hash())
+	if height < 0 {
 		return errors.New("no merkle hash in the chain." + behex.EncodeToString(p.Hash()))
 	}
 	log.Println(len(txs), len(p.Hashes))
@@ -301,7 +303,7 @@ func (n *Node) readMerkle(payload io.Reader) error {
 		if cmd != "tx" {
 			return errors.New("cannot recieve tx packets")
 		}
-		if err = n.readTx(payload, txs); err != nil {
+		if err = n.readTx(payload, txs, height); err != nil {
 			return err
 		}
 	}

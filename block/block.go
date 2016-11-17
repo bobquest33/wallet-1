@@ -81,12 +81,16 @@ func Last() *Block {
 	return lastBlock
 }
 
-//Has returns true if hash is in blocks.
-func Has(hash []byte) bool {
+//Height returns height of block whose hash is hash.
+//it returns.-1 if no block.
+func Height(hash []byte) int {
 	mutex.RLock()
 	defer mutex.RUnlock()
-	_, ok := blocks[string(hash)]
-	return ok
+	b, ok := blocks[string(hash)]
+	if !ok {
+		return -1
+	}
+	return b.Height
 }
 
 //Block is block header with height.
@@ -118,6 +122,11 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 			block: &b,
 		}
 		block.Height = p.Height + 1
+		if c, ok := params.CheckPoints[block.Height]; ok {
+			if !bytes.Equal(c, h) {
+				return hashes, errors.New("didn't match checkpoint hash")
+			}
+		}
 		blocks[string(h)] = &block
 		tails[string(h)] = &block
 		hashes = append(hashes, h)

@@ -180,3 +180,12 @@ func (pub *PublicKey) Address() (string, []byte) {
 func (priv *PrivateKey) Address() (string, []byte) {
 	return priv.PublicKey.Address()
 }
+
+//DecodeAddress converts bitcoin address to hex form.
+func DecodeAddress(addr string) ([]byte, error) {
+	pb, err := base58check.Decode(addr)
+	if err != nil {
+		return nil, err
+	}
+	return pb[1:], nil
+}

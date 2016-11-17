@@ -32,18 +32,17 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"net"
 
 	"github.com/monarj/wallet/params"
 )
 
-//Nodes represents nodes.
-var Nodes []*net.TCPAddr
-
-var alive []*Node
-
-var mutex sync.RWMutex
+var (
+	alive = make(map[string]*Node)
+	mutex sync.RWMutex
+)
 
 const (
 	maxNodes = 10
@@ -62,33 +61,57 @@ func Resolve() {
 				return
 			}
 			for _, addr := range ns {
-				log.Println("adding node", addr)
 				n, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", addr, params.Port))
 				if err != nil {
 					log.Println(err)
 					continue
 				}
-				mutex.Lock()
-				Nodes = append(Nodes, n)
-				mutex.Unlock()
+				if _, ok := alive[n.String()]; ok {
+					continue
+				}
+				log.Println("adding node", addr)
+				if err := Connect(n); err != nil {
+					log.Println(err)
+				}
 			}
 		}()
 		wg.Wait()
 	}
 }
 
-//ConnectAll connects to at most 10 nodes.
-func ConnectAll() {
-	for _, n := range Nodes {
-		log.Println("connecting ", n.String())
-		nn, err := Connect(n)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		alive = append(alive, nn)
-		if len(alive) > maxNodes {
-			return
-		}
+//WriteAll writes pkt to all alive nodes.
+func WriteAll(cmd string, pkt interface{}) {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	for _, n := range alive {
+		go func(n *Node) {
+			n.mutex.Lock()
+			if err := n.writeMessage(cmd, pkt); err != nil {
+				log.Println(err)
+			}
+			n.mutex.Unlock()
+		}(n)
 	}
+}
+
+func length() int {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	return len(alive)
+}
+
+//Run starts to connect nodes.
+func Run() {
+	Resolve()
+	go func() {
+		for range time.Tick(5 * time.Minute) {
+			cnt := 0
+			for ; cnt < 5 && length() < maxNodes; cnt++ {
+				Resolve()
+			}
+			if cnt == 5 {
+				log.Println("no nodes.")
+			}
+		}
+	}()
 }
