@@ -26,7 +26,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package node
+package peer
 
 import (
 	"fmt"
@@ -42,7 +42,7 @@ import (
 )
 
 var (
-	alive = make(map[string]*Node)
+	alive = make(map[string]*Peer)
 	mutex sync.RWMutex
 )
 

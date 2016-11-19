@@ -26,7 +26,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package node
+package peer
 
 import (
 	"bytes"
@@ -58,8 +58,8 @@ type packet struct {
 	err     error
 }
 
-//Node represents one node.
-type Node struct {
+//Peer represents one node.
+type Peer struct {
 	conn      *net.TCPConn
 	timeout   int
 	lastPing  uint64
@@ -68,7 +68,7 @@ type Node struct {
 }
 
 //Close closes conn.
-func (n *Node) Close() {
+func (n *Peer) Close() {
 	if err := n.conn.Close(); err != nil {
 		log.Println(err)
 	}
@@ -76,8 +76,8 @@ func (n *Node) Close() {
 }
 
 //New returns Node struct.
-func New(conn *net.TCPConn) *Node {
-	return &Node{
+func New(conn *net.TCPConn) *Peer {
+	return &Peer{
 		conn: conn,
 	}
 }
@@ -90,12 +90,12 @@ func Connect(addr *net.TCPAddr) error {
 		log.Println(err)
 		return err
 	}
-	n := &Node{conn: conn}
+	n := &Peer{conn: conn}
 	mutex.Lock()
 	alive[n.String()] = n
 	mutex.Unlock()
 	log.Println("connecting ", n.String())
-	go func(nn *Node) {
+	go func(nn *Peer) {
 		defer func() {
 			mutex.Lock()
 			delete(alive, nn.String())
@@ -113,11 +113,11 @@ func Connect(addr *net.TCPAddr) error {
 }
 
 //String returns TCPConn.String() of Node n.
-func (n *Node) String() string {
+func (n *Peer) String() string {
 	return n.conn.RemoteAddr().String()
 }
 
-func (n *Node) errClose(err error) error {
+func (n *Peer) errClose(err error) error {
 	if err != nil {
 		log.Println(err)
 		n.Close()
@@ -126,7 +126,7 @@ func (n *Node) errClose(err error) error {
 }
 
 //Loop starts node lifecyle.
-func (n *Node) Loop() error {
+func (n *Peer) Loop() error {
 	funcs := map[string]func(io.Reader, <-chan *packet) error{
 		"ping":        n.pongAfterReadPing,
 		"pong":        n.readPong,
@@ -179,15 +179,15 @@ func (n *Node) Loop() error {
 		}
 	}
 }
-func (n *Node) resetDeadline() error {
+func (n *Peer) resetDeadline() error {
 	return n.conn.SetDeadline(time.Time{})
 }
-func (n *Node) setDeadline() error {
+func (n *Peer) setDeadline() error {
 	return n.conn.SetDeadline(time.Now().Add(3 * time.Minute))
 }
 
 //Handshake set deadline, send versionn packet, and receives one.
-func (n *Node) Handshake() error {
+func (n *Peer) Handshake() error {
 	if err := n.writeVersion(); err != nil {
 		return err
 	}

@@ -26,7 +26,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package node
+package peer
 
 import (
 	"bytes"
@@ -65,7 +65,7 @@ type txResult struct {
 
 //ReadMessage read a message packet from buf and returns
 //cmd and payload.
-func (n *Node) readMessage() (string, *bytes.Buffer, error) {
+func (n *Peer) readMessage() (string, *bytes.Buffer, error) {
 	var message msg.Message
 	if err := msg.Unpack(n.conn, &message); err != nil {
 		log.Println(err)
@@ -82,7 +82,7 @@ func (n *Node) readMessage() (string, *bytes.Buffer, error) {
 	return message.GetCommand(), bytes.NewBuffer(message.Payload), nil
 }
 
-func (n *Node) goReadMessage() <-chan *packet {
+func (n *Peer) goReadMessage() <-chan *packet {
 	ch := make(chan *packet)
 	go func() {
 		for {
@@ -101,7 +101,7 @@ func (n *Node) goReadMessage() <-chan *packet {
 }
 
 //writeMessage writes payload in message packet.
-func (n *Node) writeMessage(cmd string, payload interface{}) error {
+func (n *Peer) writeMessage(cmd string, payload interface{}) error {
 	var buf bytes.Buffer
 	if err := msg.Pack(&buf, payload); err != nil {
 		return err
@@ -120,7 +120,7 @@ func (n *Node) writeMessage(cmd string, payload interface{}) error {
 }
 
 //parseVersion makes and returs version struct from payload with checking it.
-func (n *Node) parseVersion(payload io.Reader) (*msg.Version, error) {
+func (n *Peer) parseVersion(payload io.Reader) (*msg.Version, error) {
 	version := msg.Version{}
 	if err := msg.Unpack(payload, &version); err != nil {
 		return nil, err
@@ -134,7 +134,7 @@ func (n *Node) parseVersion(payload io.Reader) (*msg.Version, error) {
 }
 
 //writeVersion createsand send a verson packet.
-func (n *Node) writeVersion() error {
+func (n *Peer) writeVersion() error {
 	nonce := uint64(rand.Int63())
 	r, err := msg.NewNetAddr(n.conn.RemoteAddr().String(), 0)
 	if err != nil {
@@ -158,7 +158,7 @@ func (n *Node) writeVersion() error {
 	return n.writeMessage("version", ver)
 }
 
-func (n *Node) pongAfterReadPing(payload io.Reader, pch <-chan *packet) error {
+func (n *Peer) pongAfterReadPing(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Ping{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -169,7 +169,7 @@ func (n *Node) pongAfterReadPing(payload io.Reader, pch <-chan *packet) error {
 	return err
 }
 
-func (n *Node) writePing() error {
+func (n *Peer) writePing() error {
 	n.lastPing = uint64(rand.Int63())
 	po := msg.Ping{Nonce: n.lastPing}
 	err := n.writeMessage("ping", po)
@@ -177,7 +177,7 @@ func (n *Node) writePing() error {
 	return err
 }
 
-func (n *Node) readPong(payload io.Reader, pch <-chan *packet) error {
+func (n *Peer) readPong(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Pong{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -188,7 +188,7 @@ func (n *Node) readPong(payload io.Reader, pch <-chan *packet) error {
 	return nil
 }
 
-func (n *Node) writeFilterload() error {
+func (n *Peer) writeFilterload() error {
 	bf := bloom.New()
 	klist := key.Get()
 	for _, k := range klist {
@@ -214,7 +214,7 @@ func (n *Node) writeFilterload() error {
 	return err
 }
 
-func (n *Node) writeFilteradd(data [][]byte) error {
+func (n *Peer) writeFilteradd(data [][]byte) error {
 	bf := bloom.New()
 	for _, k := range data {
 		bf.Insert(k)
@@ -228,7 +228,7 @@ func (n *Node) writeFilteradd(data [][]byte) error {
 	return err
 }
 
-func (n *Node) readInv(payload io.Reader, pch <-chan *packet) error {
+func (n *Peer) readInv(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Inv{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -261,14 +261,14 @@ func makeInv(t uint32, hash [][]byte) msg.Inv {
 	}
 }
 
-func (n *Node) writeInv(t uint32, hash [][]byte) error {
+func (n *Peer) writeInv(t uint32, hash [][]byte) error {
 	po := makeInv(t, hash)
 	err := n.writeMessage("inv", po)
 	log.Println("sended inv")
 	return err
 }
 
-func (n *Node) readHeaders(payload io.Reader, pch <-chan *packet) error {
+func (n *Peer) readHeaders(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Headers{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		blockAdded <- &blockResult{err: err}
@@ -282,7 +282,7 @@ func (n *Node) readHeaders(payload io.Reader, pch <-chan *packet) error {
 	return err
 }
 
-func (n *Node) readTx(payload io.Reader, txs []msg.Hash, height int) error {
+func (n *Peer) readTx(payload io.Reader, txs []msg.Hash, height int) error {
 	p := msg.Tx{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -301,7 +301,7 @@ func (n *Node) readTx(payload io.Reader, txs []msg.Hash, height int) error {
 	return err
 }
 
-func (n *Node) readMerkle(payload io.Reader, pch <-chan *packet) error {
+func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	var err error
 	p := msg.Merkleblock{}
 	if err = msg.Unpack(payload, &p); err != nil {
