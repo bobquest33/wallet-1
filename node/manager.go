@@ -36,6 +36,8 @@ import (
 
 	"net"
 
+	"github.com/monarj/wallet/block"
+	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/params"
 )
 
@@ -45,7 +47,7 @@ var (
 )
 
 const (
-	maxNodes = 10
+	maxNodes = 5
 )
 
 //Resolve resolvs node addresses from the dns seed.
@@ -79,21 +81,6 @@ func Resolve() {
 	}
 }
 
-//WriteAll writes pkt to all alive nodes.
-func WriteAll(cmd string, pkt interface{}) {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	for _, n := range alive {
-		go func(n *Node) {
-			n.mutex.Lock()
-			if err := n.writeMessage(cmd, pkt); err != nil {
-				log.Println(err)
-			}
-			n.mutex.Unlock()
-		}(n)
-	}
-}
-
 func length() int {
 	mutex.RLock()
 	defer mutex.RUnlock()
@@ -103,6 +90,9 @@ func length() int {
 //Run starts to connect nodes.
 func Run() {
 	Resolve()
+	time.Sleep(30 * time.Second)
+	goGetHeader()
+	goGetMerkle()
 	go func() {
 		for range time.Tick(5 * time.Minute) {
 			cnt := 0
@@ -114,4 +104,73 @@ func Run() {
 			}
 		}
 	}()
+}
+
+func getheaders() msg.Getheaders {
+	h := block.LocatorHash()
+	return msg.Getheaders{
+		Version:   params.ProtocolVersion,
+		HashCount: msg.VarInt(len(h)),
+		LocHashes: h,
+		HashStop:  nil,
+	}
+}
+
+var mhash = make(chan [][]byte, 5)
+
+func goGetMerkle() {
+	go func() {
+		for hash := range mhash {
+			po := makeInv(msg.MsgFilterdBlock, hash)
+			wch <- &writeCmd{
+				cmd:  "getdata",
+				data: po,
+			}
+			log.Println("sended getdata")
+			go func(hash [][]byte) {
+				select {
+				case result := <-txAdded:
+					if result.err != nil {
+						mhash <- hash
+					}
+				case <-time.After(time.Minute):
+					mhash <- hash
+				}
+			}(hash)
+		}
+	}()
+}
+
+//goGetHeader is goroutine which gets header continually.
+func goGetHeader() {
+	finished := 0
+	go func() {
+		for {
+			wch <- &writeCmd{
+				cmd:  "getheaders",
+				data: getheaders(),
+			}
+			select {
+			case result := <-blockAdded:
+				if result.err == nil && len(result.hashes) == 0 {
+					finished++
+				} else {
+					finished = 0
+					mhash <- result.hashes
+				}
+			case <-time.After(time.Minute):
+			}
+			if finished > 10 {
+				time.Sleep(15 * time.Minute)
+			}
+		}
+	}()
+}
+
+//Notify writes cmd to a node.
+func Notify(cmd string, p interface{}) {
+	wch <- &writeCmd{
+		cmd:  cmd,
+		data: getheaders(),
+	}
 }

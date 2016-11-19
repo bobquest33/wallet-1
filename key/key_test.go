@@ -106,4 +106,18 @@ func TestKeys3(t *testing.T) {
 		t.Errorf("address not match %s", adr)
 	}
 	log.Println(adr, wif)
+
+	data := []byte("test data")
+	sig, err := private.Sign(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = private.PublicKey.Verify(sig, data); err != nil {
+		t.Error(err)
+	}
+	data2 := []byte("invalid test data")
+	if err = private.PublicKey.Verify(sig, data2); err == nil {
+		t.Error("cannot verify")
+	}
+	log.Println(err)
 }

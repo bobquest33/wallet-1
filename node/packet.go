@@ -48,6 +48,21 @@ import (
 	"github.com/monarj/wallet/tx"
 )
 
+var (
+	blockAdded = make(chan *blockResult)
+	txAdded    = make(chan *txResult)
+)
+
+//blockResult is a result after adding blocks.
+type blockResult struct {
+	hashes [][]byte
+	err    error
+}
+type txResult struct {
+	hash []byte
+	err  error
+}
+
 //ReadMessage read a message packet from buf and returns
 //cmd and payload.
 func (n *Node) readMessage() (string, *bytes.Buffer, error) {
@@ -65,6 +80,24 @@ func (n *Node) readMessage() (string, *bytes.Buffer, error) {
 		return "", nil, fmt.Errorf("checksum unmatch %x %x", message.CheckSum, h[:4])
 	}
 	return message.GetCommand(), bytes.NewBuffer(message.Payload), nil
+}
+
+func (n *Node) goReadMessage() <-chan *packet {
+	ch := make(chan *packet)
+	go func() {
+		for {
+			cmd, payload, err := n.readMessage()
+			ch <- &packet{
+				cmd:     cmd,
+				payload: payload,
+				err:     err,
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return ch
 }
 
 //writeMessage writes payload in message packet.
@@ -125,7 +158,7 @@ func (n *Node) writeVersion() error {
 	return n.writeMessage("version", ver)
 }
 
-func (n *Node) pongAfterReadPing(payload io.Reader) error {
+func (n *Node) pongAfterReadPing(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Ping{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -144,7 +177,7 @@ func (n *Node) writePing() error {
 	return err
 }
 
-func (n *Node) readPong(payload io.Reader) error {
+func (n *Node) readPong(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Pong{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -153,19 +186,6 @@ func (n *Node) readPong(payload io.Reader) error {
 		return errors.New("nonce unmatched in pong")
 	}
 	return nil
-}
-
-func (n *Node) writeGetheaders() error {
-	h := block.LocatorHash()
-	po := msg.Getheaders{
-		Version:   params.ProtocolVersion,
-		HashCount: msg.VarInt(len(h)),
-		LocHashes: h,
-		HashStop:  nil,
-	}
-	err := n.writeMessage("getheaders", po)
-	log.Println("sended getheaders")
-	return err
 }
 
 func (n *Node) writeFilterload() error {
@@ -194,7 +214,21 @@ func (n *Node) writeFilterload() error {
 	return err
 }
 
-func (n *Node) readInv(payload io.Reader) error {
+func (n *Node) writeFilteradd(data [][]byte) error {
+	bf := bloom.New()
+	for _, k := range data {
+		bf.Insert(k)
+	}
+	po := msg.FilterAdd{
+		Ndata: msg.VarInt(bloom.Bytelen),
+		Data:  []byte(bf),
+	}
+	err := n.writeMessage("filteradd", po)
+	log.Println("sended filteradd")
+	return err
+}
+
+func (n *Node) readInv(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Inv{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -205,9 +239,7 @@ func (n *Node) readInv(payload io.Reader) error {
 		case msg.MsgTX:
 			//ignore because we cannot check the validity
 		case msg.MsgBlock:
-			if err := n.writeGetheaders(); err != nil {
-				return err
-			}
+		//TODO
 		case msg.MsgFilterdBlock:
 		//can do nothing because of SPV.
 		default:
@@ -236,26 +268,18 @@ func (n *Node) writeInv(t uint32, hash [][]byte) error {
 	return err
 }
 
-func (n *Node) writeGetdata(t uint32, hash [][]byte) error {
-	po := makeInv(t, hash)
-	err := n.writeMessage("getdata", po)
-	log.Println("sended getdata")
-	return err
-}
-
-func (n *Node) readHeaders(payload io.Reader) error {
+func (n *Node) readHeaders(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Headers{}
 	if err := msg.Unpack(payload, &p); err != nil {
+		blockAdded <- &blockResult{err: err}
 		return err
 	}
 	hashes, err := block.Add(p)
-	if err != nil {
-		return err
+	blockAdded <- &blockResult{
+		hashes: hashes,
+		err:    err,
 	}
-	if err := n.writeGetdata(msg.MsgFilterdBlock, hashes); err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (n *Node) readTx(payload io.Reader, txs []msg.Hash, height int) error {
@@ -277,12 +301,24 @@ func (n *Node) readTx(payload io.Reader, txs []msg.Hash, height int) error {
 	return err
 }
 
-func (n *Node) readMerkle(payload io.Reader) error {
+func (n *Node) readMerkle(payload io.Reader, pch <-chan *packet) error {
+	var err error
 	p := msg.Merkleblock{}
-	if err := msg.Unpack(payload, &p); err != nil {
+	if err = msg.Unpack(payload, &p); err != nil {
+		txAdded <- &txResult{
+			err: err,
+		}
 		return err
 	}
-	log.Println(behex.EncodeToString(p.Hash()))
+	hblock := p.Hash()
+	txr := &txResult{
+		hash: hblock,
+		err:  err,
+	}
+	defer func() {
+		txAdded <- txr
+	}()
+	log.Println(behex.EncodeToString(hblock))
 	txs, err := p.FilteredTx()
 	if err != nil {
 		return err
@@ -290,20 +326,23 @@ func (n *Node) readMerkle(payload io.Reader) error {
 	if len(txs) == 0 {
 		return nil
 	}
-	height := block.Height(p.Hash())
+	height := block.Height(hblock)
 	if height < 0 {
-		return errors.New("no merkle hash in the chain." + behex.EncodeToString(p.Hash()))
+		err = errors.New("no merkle hash in the chain." + behex.EncodeToString(p.Hash()))
+		return err
 	}
 	log.Println(len(txs), len(p.Hashes))
 	for i := 0; i < len(txs); i++ {
-		cmd, payload, err := n.readMessage()
-		if err != nil {
+		p := <-pch
+		if p.err != nil {
+			err = p.err
 			return err
 		}
-		if cmd != "tx" {
-			return errors.New("cannot recieve tx packets")
+		if p.cmd != "tx" {
+			err = errors.New("cannot recieve tx packets")
+			return err
 		}
-		if err = n.readTx(payload, txs, height); err != nil {
+		if err = n.readTx(p.payload, txs, height); err != nil {
 			return err
 		}
 	}

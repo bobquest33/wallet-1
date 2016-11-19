@@ -47,6 +47,7 @@ var (
 	blocks    = make(map[string]*Block)
 	lastBlock = genesis
 	mutex     sync.RWMutex
+	//Added notifes blocks was added.
 )
 
 func init() {
@@ -104,14 +105,16 @@ type Block struct {
 func Add(mbs msg.Headers) ([][]byte, error) {
 	hashes := make([][]byte, 0, len(mbs.Inventory))
 	mutex.Lock()
+	var err error
 	defer mutex.Unlock()
 	for i, b := range mbs.Inventory {
 		p, ok := blocks[string(b.Prev)]
 		if !ok {
 			log.Print(i)
-			return hashes, errors.New("orphan block " + behex.EncodeToString(b.Prev))
+			err = errors.New("orphan block " + behex.EncodeToString(b.Prev))
+			return hashes, err
 		}
-		if err := b.IsOK(p.Height + 1); err != nil {
+		if err = b.IsOK(p.Height + 1); err != nil {
 			return hashes, err
 		}
 		h := b.Hash()
@@ -124,7 +127,8 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 		block.Height = p.Height + 1
 		if c, ok := params.CheckPoints[block.Height]; ok {
 			if !bytes.Equal(c, h) {
-				return hashes, errors.New("didn't match checkpoint hash")
+				err = errors.New("didn't match checkpoint hash")
+				return hashes, err
 			}
 		}
 		blocks[string(h)] = &block

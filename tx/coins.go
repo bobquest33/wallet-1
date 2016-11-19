@@ -29,14 +29,12 @@
 package tx
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"log"
 	"sort"
 	"sync"
-
-	"bytes"
-
-	"fmt"
 
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/key"
@@ -44,9 +42,19 @@ import (
 )
 
 var (
-	coins = make(map[string]Coins)
-	mutex sync.RWMutex
+	coins  = make(map[string]Coins)
+	notify = make(map[string]chan *msg.Tx)
+	mutex  sync.RWMutex
 )
+
+//AddNotify adds pubscript to be notified.
+func AddNotify(pubscr []byte) chan *msg.Tx {
+	ch := make(chan *msg.Tx)
+	mutex.Lock()
+	defer mutex.Unlock()
+	notify[string(pubscr)] = ch
+	return ch
+}
 
 //Coins is array of coins.
 type Coins []*Coin
@@ -82,12 +90,12 @@ func SortedCoins() Coins {
 type Coin struct {
 	Pubkey   []byte
 	TxHash   []byte
-	TxIndex  uint32
 	Value    uint64
 	Ttype    int
 	Height   int
-	Coinbase bool
 	Script   []byte
+	TxIndex  uint32
+	Coinbase bool
 }
 
 func add(pub *key.PublicKey, tx *msg.Tx, index uint32,
@@ -155,7 +163,7 @@ type Script struct {
 	CheckSig    byte
 }
 
-//Script2 is anotther out scrip this program supports.
+//Script2 is P2SH script.
 type Script2 struct {
 	Length   byte
 	Pubkey   []byte `len:"var"`
@@ -234,29 +242,35 @@ func Add(mtx *msg.Tx, height int) error {
 		}
 	}
 	for i, in := range mtx.TxOut {
-		s := Script{}
-		err := parse(&s, in.Script)
+		for k, v := range notify {
+			if bytes.Equal(in.Script, []byte(k)) {
+				delete(notify, k)
+				v <- mtx
+			}
+		}
+		s1 := Script{}
+		err1 := parse(&s1, in.Script)
 		s2 := Script2{}
 		err2 := parse(&s2, in.Script)
 
 		var pubkey *key.PublicKey
-		var err3 error
+		var err error
 		var ttype int
 		switch {
-		case err == nil:
+		case err1 == nil:
 			log.Println("pubkeyhash scriptsig")
-			pubkey, err3 = checkTxout(&s)
+			pubkey, err = checkTxout(&s1)
 			ttype = 0
 		case err2 == nil:
 			log.Println("pubkey scriptsig")
-			pubkey, err3 = checkTxout2(&s2)
+			pubkey, err = checkTxout2(&s2)
 			ttype = 1
 		default:
-			log.Println(err, err2)
-			err3 = fmt.Errorf("This txout is not supproted")
+			log.Println(err1, err2)
+			err = fmt.Errorf("This txout is not supproted")
 		}
-		if err3 != nil {
-			log.Println(err3, behex.EncodeToString(mtx.Hash()))
+		if err != nil {
+			log.Println(err, behex.EncodeToString(mtx.Hash()))
 			continue
 		}
 		add(pubkey, mtx, uint32(i), ttype, height, coinbase, in.Script)

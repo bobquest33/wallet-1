@@ -31,6 +31,7 @@ package key
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log"
 
 	"github.com/monarj/wallet/base58check"
@@ -128,20 +129,6 @@ func (priv *PrivateKey) Sign(hash []byte) ([]byte, error) {
 	return sig.Serialize(), nil
 }
 
-//SignMessage sign using bitcoin sign struct
-func (priv *PrivateKey) SignMessage(hash []byte) ([]byte, error) {
-	msg := append([]byte("\x18Bitcoin Signed Message:\n"), byte(len(hash)))
-	msg = append(msg, hash...)
-	h := sha256.Sum256(msg)
-	hh := sha256.Sum256(h[:])
-	s256 := btcec.S256()
-	sig, err := btcec.SignCompact(s256, priv.PrivateKey, hh[:], priv.PublicKey.isCompressed)
-	if err != nil {
-		return nil, err
-	}
-	return sig, nil
-}
-
 //WIFAddress returns WIF format string from PrivateKey
 func (priv *PrivateKey) WIFAddress() string {
 	p := priv.Serialize()
@@ -188,4 +175,18 @@ func DecodeAddress(addr string) ([]byte, error) {
 		return nil, err
 	}
 	return pb[1:], nil
+}
+
+//Verify verifies signature is valid or not.
+func (pub *PublicKey) Verify(signature []byte, data []byte) error {
+	secp256k1 := btcec.S256()
+	sig, err := btcec.ParseSignature(signature, secp256k1)
+	if err != nil {
+		return err
+	}
+	valid := sig.Verify(data, pub.PublicKey)
+	if !valid {
+		return fmt.Errorf("signature is invalid")
+	}
+	return nil
 }

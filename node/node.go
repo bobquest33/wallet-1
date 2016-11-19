@@ -29,6 +29,7 @@
 package node
 
 import (
+	"bytes"
 	"errors"
 	"log"
 	"net"
@@ -41,13 +42,29 @@ const (
 	timeout = 2
 )
 
+var (
+	wch = make(chan *writeCmd, maxNodes)
+)
+
+type writeCmd struct {
+	cmd  string
+	data interface{}
+	ch   chan error
+}
+
+type packet struct {
+	cmd     string
+	payload *bytes.Buffer
+	err     error
+}
+
 //Node represents one node.
 type Node struct {
 	conn      *net.TCPConn
-	Closed    bool
 	timeout   int
-	LastBlock uint32
 	lastPing  uint64
+	LastBlock uint32
+	Closed    bool
 }
 
 //Close closes conn.
@@ -60,7 +77,9 @@ func (n *Node) Close() {
 
 //New returns Node struct.
 func New(conn *net.TCPConn) *Node {
-	return &Node{conn: conn}
+	return &Node{
+		conn: conn,
+	}
 }
 
 //Connect connects to node ,send a version packet,
@@ -106,72 +125,69 @@ func (n *Node) errClose(err error) error {
 	return err
 }
 
-func (n *Node) errHandle(err error) error {
-	if err != nil {
-		op, ok := err.(*net.OpError)
-		if ok && op.Timeout() {
-			if n.timeout++; n.timeout > timeout {
-				return errors.New("timeout")
-			}
-			if err = n.writePing(); err != nil {
-				return err
-			}
-			return nil
-		}
-	}
-	return err
-}
-
 //Loop starts node lifecyle.
 func (n *Node) Loop() error {
-	funcs := map[string]func(io.Reader) error{
+	funcs := map[string]func(io.Reader, <-chan *packet) error{
 		"ping":        n.pongAfterReadPing,
 		"pong":        n.readPong,
 		"inv":         n.readInv,
 		"headers":     n.readHeaders,
 		"merkleblock": n.readMerkle,
 	}
+	pch := n.goReadMessage()
 	for {
-		cmd, payload, err := n.readMessage()
-		if err = n.errHandle(err); err != nil {
+		if err := n.resetDeadline(); err != nil {
 			return n.errClose(err)
 		}
-		log.Println(cmd + " from " + n.conn.RemoteAddr().String())
-		f, exist := funcs[cmd]
-		if !exist {
-			log.Printf("%s:unknown or unsupported command", cmd)
-			n.mutex.Unlock()
-			continue
+		select {
+		case p := <-pch:
+			if p.err != nil {
+				return n.errClose(p.err)
+			}
+			log.Println(p.cmd + " from " + n.conn.RemoteAddr().String())
+			n.timeout = 0
+			f, exist := funcs[p.cmd]
+			if !exist {
+				log.Printf("%s:unknown or unsupported command", p.cmd)
+				continue
+			}
+			if err := n.setDeadline(); err != nil {
+				return n.errClose(err)
+			}
+			if err := f(p.payload, pch); err != nil {
+				return n.errClose(err)
+			}
+		case w := <-wch:
+			if err := n.setDeadline(); err != nil {
+				return n.errClose(err)
+			}
+			err := n.writeMessage(w.cmd, w.data)
+			w.ch <- err
+			if err != nil {
+				return n.errClose(err)
+			}
+		case <-time.After(3 * time.Minute):
+			if n.timeout++; n.timeout > timeout {
+				return errors.New("timeout")
+			}
+			if err := n.setDeadline(); err != nil {
+				return n.errClose(err)
+			}
+			if err := n.writePing(); err != nil {
+				return n.errClose(err)
+			}
 		}
-		err = f(payload)
-		if err = n.errHandle(err); err != nil {
-			return n.errClose(err)
-		}
-		if err := n.setDeadline(); err != nil {
-			return n.errClose(err)
-		}
-		n.mutex.Unlock()
 	}
 }
-
+func (n *Node) resetDeadline() error {
+	return n.conn.SetDeadline(time.Time{})
+}
 func (n *Node) setDeadline() error {
-	if err := n.conn.SetDeadline(time.Now().Add(3 * time.Minute)); err != nil {
-		return err
-	}
-	if err := n.conn.SetReadDeadline(time.Now().Add(3 * time.Minute)); err != nil {
-		return err
-	}
-	if err := n.conn.SetWriteDeadline(time.Now().Add(3 * time.Minute)); err != nil {
-		return err
-	}
-	return nil
+	return n.conn.SetDeadline(time.Now().Add(3 * time.Minute))
 }
 
 //Handshake set deadline, send versionn packet, and receives one.
 func (n *Node) Handshake() error {
-	if err := n.setDeadline(); err != nil {
-		return err
-	}
 	if err := n.writeVersion(); err != nil {
 		return err
 	}
@@ -221,11 +237,5 @@ func (n *Node) Handshake() error {
 		return err
 	}
 	log.Println("sended mempool")
-
-	if err = n.writeGetheaders(); err != nil {
-		log.Println(err)
-		return err
-	}
-
 	return nil
 }
