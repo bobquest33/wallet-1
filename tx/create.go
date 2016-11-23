@@ -36,6 +36,10 @@ import (
 	"log"
 	"math"
 
+	"golang.org/x/crypto/ripemd160"
+
+	"encoding/hex"
+
 	"github.com/StorjPlatform/gocoin/btcec"
 	"github.com/monarj/wallet/block"
 	"github.com/monarj/wallet/key"
@@ -54,8 +58,8 @@ func p2pkTtxout(send *Send) (*msg.TxOut, error) {
 	if err != nil {
 		return nil, err
 	}
-	script := make([]byte, 0, len(addr)+4)
-	script = append(script, opDUP, opHASH160)
+	script := make([]byte, 0, len(addr)+5)
+	script = append(script, opDUP, opHASH160, byte(len(addr)))
 	script = append(script, addr...)
 	script = append(script, opEQUALVERIFY, opCHECKSIG)
 	return &msg.TxOut{
@@ -86,19 +90,20 @@ func newTxins(total uint64) ([]msg.TxIn, []*key.PrivateKey, *msg.TxOut, error) {
 	var privs []*key.PrivateKey
 	for i := 0; i < len(coins) && amount < total; i++ {
 		c := coins[i]
-		amount += c.Value
 		height := block.Last().Height
 		if c.Coinbase && height-c.Height < params.SpendableCoinbaseDepth {
+			log.Println("unspendable coinbase because of height")
 			continue
 		}
 		if height-c.Height < params.Nconfirmed {
+			log.Println("unspendable because of height")
 			continue
 		}
 		txins = append(txins, msg.TxIn{
 			Hash:      c.TxHash,
 			Index:     c.TxIndex,
 			ScriptLen: msg.VarInt(len(c.Script)),
-			Script:    c.Script, //pubscript to be hashed.
+			Script:    c.Script, //pubscript to sign.
 			Seq:       math.MaxUint32,
 		})
 		pub, err := key.NewPublicKey(c.Pubkey)
@@ -106,11 +111,13 @@ func newTxins(total uint64) ([]msg.TxIn, []*key.PrivateKey, *msg.TxOut, error) {
 			return nil, nil, nil, err
 		}
 		privs = append(privs, key.Find(pub))
+		amount += c.Value
+	}
+	if amount < total {
+		return nil, nil, nil, fmt.Errorf("shortage of coin %d < %d %d",
+			amount, total, len(coins))
 	}
 	remain := amount - total
-	if remain < 0 {
-		return nil, nil, nil, errors.New("shortage of coin")
-	}
 	var mto *msg.TxOut
 	var err error
 	if remain > 0 {
@@ -123,6 +130,7 @@ func newTxins(total uint64) ([]msg.TxIn, []*key.PrivateKey, *msg.TxOut, error) {
 	}
 	return txins, privs, mto, err
 }
+
 func signTx(result *msg.Tx, privs []*key.PrivateKey) ([][]byte, error) {
 	var buf bytes.Buffer
 	if err := msg.Pack(&buf, *result); err != nil {
@@ -132,6 +140,7 @@ func signTx(result *msg.Tx, privs []*key.PrivateKey) ([][]byte, error) {
 	beforeb = append(beforeb, 0x01, 0, 0, 0) //hash code type
 	h := sha256.Sum256(beforeb)
 	h = sha256.Sum256(h[:])
+	log.Println(hex.EncodeToString(h[:]))
 	sign := make([][]byte, len(privs))
 	var err error
 	for i, p := range privs {
@@ -163,7 +172,6 @@ func fillSign(result *msg.Tx, privs []*key.PrivateKey) error {
 
 //NewP2PK creates msg.Tx from send infos.
 func NewP2PK(sends ...*Send) (*msg.Tx, error) {
-	total := params.Fee
 	txouts, total, err := p2pkTxouts(sends...)
 	if err != nil {
 		return nil, err
@@ -205,16 +213,32 @@ func (p *PubInfo) redeemScript() []byte {
 		scr = append(scr, ser...)
 	}
 	scr = append(scr, op1+(byte(len(p.Pubs)-1)))
-	return append(scr, opCHECKMULTISIG)
+	scr = append(scr, opCHECKMULTISIG)
+	return scr
+}
+
+func (p *PubInfo) redeemHash() ([]byte, error) {
+	redeem := p.redeemScript()
+	h := sha256.Sum256(redeem)
+	ripeHash := ripemd160.New()
+	if _, err := ripeHash.Write(h[:]); err != nil {
+		return nil, err
+	}
+	hash160 := ripeHash.Sum(nil)
+	script := make([]byte, 0, len(hash160)+3)
+	script = append(script, opHASH160, byte(len(hash160)))
+	script = append(script, hash160...)
+	script = append(script, opEQUAL)
+	return script, nil
 }
 
 //MultisigOut creates multisig output.
 func (p *PubInfo) MultisigOut() (*msg.Tx, error) {
+	script, err := p.redeemHash()
+	if err != nil {
+		return nil, err
+	}
 	txouts := make([]msg.TxOut, 1, 2)
-	script := make([]byte, 23)
-	script = append(script, opHASH160)
-	script = append(script, p.redeemScript()...)
-	script = append(script, opEQUAL)
 	txouts[0] = msg.TxOut{
 		Value:     p.Amount,
 		ScriptLen: msg.VarInt(len(script)),
@@ -236,14 +260,17 @@ func (p *PubInfo) MultisigOut() (*msg.Tx, error) {
 		Locktime: 0,
 	}
 	fillSign(&result, privs)
-
+	p.Prev = &result
 	return &result, nil
 }
 
 func (p *PubInfo) searchTxout() (uint32, error) {
-	redeem := p.redeemScript()
+	hash, err := p.redeemHash()
+	if err != nil {
+		return 0, err
+	}
 	for i, out := range p.Prev.TxOut {
-		if bytes.Equal(out.Script, redeem) {
+		if bytes.Equal(out.Script, hash) {
 			return uint32(i), nil
 		}
 	}
@@ -251,6 +278,9 @@ func (p *PubInfo) searchTxout() (uint32, error) {
 }
 
 func (p *PubInfo) txForSign(seq, locktime uint32, sends ...*Send) (*msg.Tx, error) {
+	if p.Prev == nil {
+		return nil, errors.New("must call MultisigOut first")
+	}
 	total := params.Fee
 	txouts, total, err := p2pkTxouts(sends...)
 	if err != nil {
@@ -321,12 +351,15 @@ func (p *PubInfo) MultisigIn(seq, locktime uint32, sigs [][]byte, sends ...*Send
 		return nil, err
 	}
 	redeem := p.redeemScript()
-	script2 := make([]byte, 0, 33*len(sigs)+len(redeem)+1)
+	script2 := make([]byte, 0, 73*len(sigs)+len(redeem)+3)
+	script2 = append(script2, op0)
+	var nsig byte
 	for i, s := range sigs {
 		if s == nil {
 			pri := key.Find(p.Pubs[i])
 			if pri == nil {
-				return nil, fmt.Errorf("no private key from pubkey %d", i)
+				log.Printf("no private key from pubkey %d", i)
+				continue
 			}
 			signs, err := signTx(mtx, []*key.PrivateKey{pri})
 			if err != nil {
@@ -340,8 +373,12 @@ func (p *PubInfo) MultisigIn(seq, locktime uint32, sigs [][]byte, sends ...*Send
 		}
 		script2 = append(script2, byte(len(s)))
 		script2 = append(script2, s...)
+		nsig++
 	}
-	script2 = append(script2, byte(len(redeem)))
+	if nsig != p.M {
+		return nil, errors.New("signatures are not enough")
+	}
+	script2 = append(script2, opPUSHDATA1, byte(len(redeem)))
 	script2 = append(script2, redeem...)
 	mtx.TxIn[0].ScriptLen = msg.VarInt(len(script2))
 	mtx.TxIn[0].Script = script2

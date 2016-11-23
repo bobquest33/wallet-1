@@ -286,7 +286,7 @@ func checkTxin(s *ScriptSigT) (*key.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if key.Find(pubkey) != nil {
+	if key.Find(pubkey) == nil {
 		adr, _ := pubkey.Address()
 		return nil, errors.New("not concerened address " + adr)
 	}

@@ -29,12 +29,10 @@
 package block
 
 import (
+	"bytes"
 	"errors"
 	"log"
-
 	"sync"
-
-	"bytes"
 
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/msg"

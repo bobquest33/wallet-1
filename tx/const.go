@@ -29,10 +29,10 @@
 package tx
 
 const (
-	// op0                   = byte(0)
+	op0 = byte(0)
 	// opFALSE               = byte(0)
 	// opNA                  = byte(1)
-	// opPUSHDATA1           = byte(76)
+	opPUSHDATA1 = byte(76)
 	// opPUSHDATA2           = byte(77)
 	// opPUSHDATA4           = byte(78)
 	// op1NEGATE             = byte(79)

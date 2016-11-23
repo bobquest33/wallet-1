@@ -26,49 +26,63 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package params
+package rpc
 
 import (
-	"log"
-
-	"golang.org/x/crypto/scrypt"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"net/http"
 )
 
-var (
-	//PoWFunc is a func to calculate PoW.
-	PoWFunc = func(height int, data []byte) []byte {
-		if height >= 450000 {
-			return Lyra2REv2(data)
-		}
-		converted, err := scrypt.Key(data, data, 1024, 1, 1, 32)
-		if err != nil {
-			log.Fatal(err)
-		}
-		return converted
+//JSONRPC is params for jsonrpc.
+type JSONRPC struct {
+	Method   string      `json:"method"`
+	Params   interface{} `json:"params"`
+	ID       string      `json:"id"`
+	URL      string      `json:"-"`
+	User     string      `json:"-"`
+	Password string      `json:"-"`
+}
+
+//Call calls json rpc.
+func (j *JSONRPC) Call() (interface{}, error) {
+	j.ID = "test"
+	jsonStr, err := json.Marshal(j)
+	if err != nil {
+		return nil, err
 	}
-)
+	req, err := http.NewRequest("POST", j.URL, bytes.NewBuffer(jsonStr))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(j.User, j.Password)
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
 
-const (
-	//Version is the version of this program.
-	Version = "0.0.0"
-	//ProtocolVersion is the version which this program supports.
-	ProtocolVersion uint32 = 70003
-	//MainNet represents mainnet.
-	MainNet = "main"
-	//TestNet represents testnet.
-	TestNet = "test"
-
-	//UserAgent is the user agent.
-	UserAgent = "/monarj:" + Version + "/"
-	//Nconfirmed is the block height block is regarded as confirmed.
-	Nconfirmed = 5
-	//Unit is base unit.
-	Unit = 100000000
-	//Fee for a transaction
-	Fee = uint64(0.001 * Unit) //  1m MONA/kB
-)
-
-//TODO
-func Lyra2REv2(data []byte) []byte {
-	return nil
+	if resp.StatusCode != http.StatusOK {
+		fmt.Println("response Status:", resp.Status)
+		return nil, errors.New(resp.Status)
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	err = json.Unmarshal(body, &result)
+	if result["error"] != nil {
+		estr, ok := result["error"].(string)
+		if !ok {
+			estr = "Unknown error"
+		}
+		return nil, errors.New(estr)
+	}
+	return result["result"], err
 }

@@ -31,10 +31,9 @@ package peer
 import (
 	"fmt"
 	"log"
+	"net"
 	"sync"
 	"time"
-
-	"net"
 
 	"github.com/monarj/wallet/block"
 	"github.com/monarj/wallet/msg"

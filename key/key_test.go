@@ -29,12 +29,11 @@
 package key
 
 import (
+	"encoding/hex"
 	"log"
 	"testing"
 
 	"github.com/monarj/wallet/btcec"
-
-	"encoding/hex"
 )
 
 func TestKeys2(t *testing.T) {

@@ -26,49 +26,37 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package params
+package lyra2re2
 
 import (
-	"log"
-
-	"golang.org/x/crypto/scrypt"
+	"github.com/aead/skein"
+	"github.com/dchest/blake256"
+	"github.com/monarj/wallet/lyra2re2/bmw"
+	"github.com/monarj/wallet/lyra2re2/cubehash"
+	"github.com/monarj/wallet/lyra2re2/lyra2"
+	"github.com/monarj/wallet/lyra2re2/sha3"
 )
 
-var (
-	//PoWFunc is a func to calculate PoW.
-	PoWFunc = func(height int, data []byte) []byte {
-		if height >= 450000 {
-			return Lyra2REv2(data)
-		}
-		converted, err := scrypt.Key(data, data, 1024, 1, 1, 32)
-		if err != nil {
-			log.Fatal(err)
-		}
-		return converted
+//Lyra2re2 returns the result of Lyra2re2 hash.
+func Lyra2re2(data []byte) ([]byte, error) {
+	blake := blake256.New()
+	if _, err := blake.Write(data); err != nil {
+		return nil, err
 	}
-)
+	resultBlake := blake.Sum(nil)
 
-const (
-	//Version is the version of this program.
-	Version = "0.0.0"
-	//ProtocolVersion is the version which this program supports.
-	ProtocolVersion uint32 = 70003
-	//MainNet represents mainnet.
-	MainNet = "main"
-	//TestNet represents testnet.
-	TestNet = "test"
+	keccak := sha3.NewKeccak256()
+	if _, err := keccak.Write(resultBlake); err != nil {
+		return nil, err
+	}
 
-	//UserAgent is the user agent.
-	UserAgent = "/monarj:" + Version + "/"
-	//Nconfirmed is the block height block is regarded as confirmed.
-	Nconfirmed = 5
-	//Unit is base unit.
-	Unit = 100000000
-	//Fee for a transaction
-	Fee = uint64(0.001 * Unit) //  1m MONA/kB
-)
-
-//TODO
-func Lyra2REv2(data []byte) []byte {
-	return nil
+	resultkeccak := keccak.Sum(nil)
+	resultcube := cubehash.Sum256(resultkeccak)
+	lyra2result := make([]byte, 32)
+	lyra2.LYRA2(lyra2result, resultcube, resultcube, 1, 4, 4)
+	var skeinresult [32]byte
+	skein.Sum256(&skeinresult, lyra2result, nil)
+	resultcube2 := cubehash.Sum256(skeinresult[:])
+	resultbmw := bmw.Sum(resultcube2)
+	return resultbmw, nil
 }

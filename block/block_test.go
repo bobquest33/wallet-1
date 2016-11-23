@@ -29,11 +29,10 @@
 package block
 
 import (
+	"bytes"
 	"encoding/hex"
 	"log"
 	"testing"
-
-	"bytes"
 
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/msg"

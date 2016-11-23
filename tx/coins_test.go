@@ -29,11 +29,10 @@
 package tx
 
 import (
+	"bytes"
 	"encoding/hex"
 	"log"
 	"testing"
-
-	"bytes"
 
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/key"
@@ -54,6 +53,8 @@ func addpubkey(addr string) string {
 		PrivateKey: nil,
 		PublicKey:  pub,
 	}
+	ad, _ := pub.Address()
+	log.Println("added", ad)
 	key.Add(priv)
 	return string(a)
 }
@@ -95,16 +96,16 @@ func TestTx1(t *testing.T) {
 	}
 	a := addpubkey(addr)
 	txs := maketx(stx)
-	if err := Add(txs[0]); err != nil {
+	if err := Add(txs[0], -20); err != nil {
 		t.Fatal(err)
 	}
 	if len(coins[a]) != 1 {
-		t.Fatal("cound not add coin")
+		t.Fatal("could not add coin")
 	}
 	if coins[a][0].Value != 50*params.Unit {
 		t.Fatal("value differes", coins[a][0].Value)
 	}
-	if err := Add(txs[1]); err != nil {
+	if err := Add(txs[1], -20); err != nil {
 		t.Fatal(err)
 	}
 	if len(coins[a]) != 0 {
@@ -127,7 +128,7 @@ func TestTx2(t *testing.T) {
 	a := addpubkey(addr)
 	txs := maketx(stx)
 	log.Println(behex.EncodeToString(txs[0].Hash()))
-	if err := Add(txs[0]); err != nil {
+	if err := Add(txs[0], -20); err != nil {
 		t.Fatal(err)
 	}
 	if len(coins[a]) != 1 {
@@ -137,7 +138,7 @@ func TestTx2(t *testing.T) {
 		t.Fatal("value differes", coins[a][0].Value)
 	}
 	log.Println(behex.EncodeToString(txs[1].Hash()))
-	if err := Add(txs[1]); err != nil {
+	if err := Add(txs[1], -20); err != nil {
 		t.Fatal(err)
 	}
 	if len(coins[a]) != 0 {

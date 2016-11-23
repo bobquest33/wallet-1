@@ -29,10 +29,9 @@
 package peer
 
 import (
+	"log"
 	"testing"
 	"time"
-
-	"log"
 )
 
 func TestServer(t *testing.T) {

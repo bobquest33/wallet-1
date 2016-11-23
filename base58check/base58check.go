@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"log"
 	"math/big"
+
+	"fmt"
 
 	"github.com/monarj/wallet/base58check/base58"
 )
@@ -30,31 +31,25 @@ func Encode(prefix byte, byteData []byte) string {
 	bigIntEncodedChecksum.SetBytes(encoded)
 
 	//Encode the big int checksum'd version into a Base58Checked string
-	base58EncodedChecksum := string(base58.EncodeBig(nil, bigIntEncodedChecksum))
+	base58EncodedChecksum := base58.EncodeBig(nil, bigIntEncodedChecksum)
 
 	//Now for each zero byte we counted above we need to prepend a 1 to our
 	//base58 encoded string. The rational behind this is that base58 removes 0's (0x00).
 	//So bitcoin demands we add leading 0s back on as 1s.
-	var buffer bytes.Buffer
+	buffer := make([]byte, 0, len(base58EncodedChecksum))
 
 	//base58 alone is not enough. We need to first count each of the zero bytes
 	//which are at the beginning of the encodedCheckSum
 
 	for _, v := range encoded {
 		if v == 0 {
-			if err := buffer.WriteByte('1'); err != nil {
-				log.Fatal(err)
-			}
+			buffer = append(buffer, '1')
 		} else {
 			break
 		}
 	}
-
-	if _, err := buffer.WriteString(base58EncodedChecksum); err != nil {
-		log.Fatal(err)
-	}
-
-	return buffer.String()
+	buffer = append(buffer, base58EncodedChecksum...)
+	return string(buffer)
 }
 
 //Decode decodes base58 value to bytes.
@@ -65,34 +60,29 @@ func Decode(value string) ([]byte, error) {
 	}
 
 	encodedChecksum := publicKeyInt.Bytes()
-
 	encoded := encodedChecksum[:len(encodedChecksum)-4]
 	cksum := encodedChecksum[len(encodedChecksum)-4:]
 
-	var buffer bytes.Buffer
+	buffer := make([]byte, 0, len(encoded))
 	for _, v := range value {
 		if v == '1' {
-			if err := buffer.WriteByte(0); err != nil {
-				log.Fatal(err)
-			}
+			buffer = append(buffer, 0)
 		} else {
 			break
 		}
 	}
 
-	if _, err := buffer.Write(encoded); err != nil {
-		log.Fatal(err)
-	}
-
-	result := buffer.Bytes()
+	buffer = append(buffer, encoded...)
 
 	//Perform SHA-256 twice
-	hash := sha256.Sum256(result)
+	hash := sha256.Sum256(buffer)
 	hash2 := sha256.Sum256(hash[:])
 
 	if !bytes.Equal(hash2[:4], cksum) {
-		log.Println(value, "warn:", "checksum not matched", "embeded cksum:", hex.EncodeToString(cksum), "cksum:", hex.EncodeToString(hash2[:4]))
+		return nil,
+			fmt.Errorf("%s checksum not matched embeded cksum:%s cksum:%s",
+				value, hex.EncodeToString(cksum), hex.EncodeToString(hash2[:4]))
 	}
 
-	return result, err
+	return buffer, err
 }

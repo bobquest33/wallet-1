@@ -31,14 +31,13 @@ package msg
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
 	"math/big"
 	"net"
 	"time"
-
-	"encoding/binary"
 
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/params"

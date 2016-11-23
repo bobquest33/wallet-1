@@ -26,49 +26,27 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package params
+package lyra2re2
 
 import (
-	"log"
-
-	"golang.org/x/crypto/scrypt"
+	"bytes"
+	"encoding/hex"
+	"testing"
 )
 
-var (
-	//PoWFunc is a func to calculate PoW.
-	PoWFunc = func(height int, data []byte) []byte {
-		if height >= 450000 {
-			return Lyra2REv2(data)
-		}
-		converted, err := scrypt.Key(data, data, 1024, 1, 1, 32)
-		if err != nil {
-			log.Fatal(err)
-		}
-		return converted
+func TestLyra2re2(t *testing.T) {
+	correct, err := hex.DecodeString("5f21d7763b1ae8fc87db7dc993ddc50468765729411ba6b24906de15851a4abf")
+	if err != nil {
+		t.Fatal(err)
 	}
-)
 
-const (
-	//Version is the version of this program.
-	Version = "0.0.0"
-	//ProtocolVersion is the version which this program supports.
-	ProtocolVersion uint32 = 70003
-	//MainNet represents mainnet.
-	MainNet = "main"
-	//TestNet represents testnet.
-	TestNet = "test"
-
-	//UserAgent is the user agent.
-	UserAgent = "/monarj:" + Version + "/"
-	//Nconfirmed is the block height block is regarded as confirmed.
-	Nconfirmed = 5
-	//Unit is base unit.
-	Unit = 100000000
-	//Fee for a transaction
-	Fee = uint64(0.001 * Unit) //  1m MONA/kB
-)
-
-//TODO
-func Lyra2REv2(data []byte) []byte {
-	return nil
+	data := make([]byte, 80)
+	copy(data, []byte("test"))
+	result, err := Lyra2re2(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(correct, result) {
+		t.Error("not match")
+	}
 }

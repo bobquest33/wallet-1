@@ -31,10 +31,9 @@ package peer
 import (
 	"bytes"
 	"errors"
+	"io"
 	"log"
 	"net"
-
-	"io"
 	"time"
 )
 

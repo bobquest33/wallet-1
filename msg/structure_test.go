@@ -104,12 +104,19 @@ func TestStruct(t *testing.T) {
 		}
 		buf := bytes.NewBuffer(b)
 		h := BlockHeader{}
-		if err := Unpack(buf, &h); err != nil {
+		if err = Unpack(buf, &h); err != nil {
 			t.Fatal(err)
 		}
-		outs := behex.EncodeToString(h.scrypt())
+		var buf2 bytes.Buffer
+		if err = Pack(&buf2, h.HBlockHeader); err != nil {
+			t.Fatal(err)
+		}
+		outs := behex.EncodeToString(params.PoWFunc(0, buf2.Bytes()))
 		if outs != expected[i] {
 			t.Error("scrypt not match", outs)
+		}
+		if err := h.IsOK(0); err != nil {
+			t.Error("judged not ok", err)
 		}
 	}
 

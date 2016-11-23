@@ -32,7 +32,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"log"
-
 	"math"
 
 	"github.com/monarj/wallet/key"
