@@ -31,6 +31,8 @@ package params
 import (
 	"log"
 
+	"github.com/monarj/wallet/lyra2re2"
+
 	"golang.org/x/crypto/scrypt"
 )
 
@@ -38,7 +40,11 @@ var (
 	//PoWFunc is a func to calculate PoW.
 	PoWFunc = func(height int, data []byte) []byte {
 		if height >= 450000 {
-			return Lyra2REv2(data)
+			converted, err := lyra2re2.Lyra2re2(data)
+			if err != nil {
+				log.Fatal(err)
+			}
+			return converted
 		}
 		converted, err := scrypt.Key(data, data, 1024, 1, 1, 32)
 		if err != nil {
@@ -67,8 +73,3 @@ const (
 	//Fee for a transaction
 	Fee = uint64(0.001 * Unit) //  1m MONA/kB
 )
-
-//TODO
-func Lyra2REv2(data []byte) []byte {
-	return nil
-}
