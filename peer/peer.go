@@ -74,43 +74,6 @@ func (n *Peer) Close() {
 	n.Closed = true
 }
 
-//New returns Node struct.
-func New(conn *net.TCPConn) *Peer {
-	return &Peer{
-		conn: conn,
-	}
-}
-
-//Connect connects to node ,send a version packet,
-//and returns Node struct.
-func Connect(addr *net.TCPAddr) error {
-	conn, err := net.DialTCP("tcp", nil, addr)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	n := &Peer{conn: conn}
-	mutex.Lock()
-	alive[n.String()] = n
-	mutex.Unlock()
-	log.Println("connecting ", n.String())
-	go func(nn *Peer) {
-		defer func() {
-			mutex.Lock()
-			delete(alive, nn.String())
-			mutex.Unlock()
-		}()
-		if err = n.Handshake(); err != nil {
-			log.Println(err)
-			return
-		}
-		if errr := nn.Loop(); errr != nil {
-			log.Println(errr)
-		}
-	}(n)
-	return err
-}
-
 //String returns TCPConn.String() of Node n.
 func (n *Peer) String() string {
 	return n.conn.RemoteAddr().String()
@@ -132,6 +95,7 @@ func (n *Peer) Loop() error {
 		"inv":         n.readInv,
 		"headers":     n.readHeaders,
 		"merkleblock": n.readMerkle,
+		"addr":        n.readAddr,
 	}
 	pch := n.goReadMessage()
 	for {
@@ -236,5 +200,12 @@ func (n *Peer) Handshake() error {
 		return err
 	}
 	log.Println("sended mempool")
+
+	if err = n.writeMessage("getaddr", struct{}{}); err != nil {
+		log.Println(err)
+		return err
+	}
+	log.Println("sended getaddr")
+
 	return nil
 }

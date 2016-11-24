@@ -42,7 +42,7 @@ func TestLyra2re2(t *testing.T) {
 
 	data := make([]byte, 80)
 	copy(data, []byte("test"))
-	result, err := Lyra2re2(data)
+	result, err := Sum(data)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -349,3 +349,20 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	log.Println("read merkle")
 	return nil
 }
+
+func (n *Peer) readAddr(payload io.Reader, pch <-chan *packet) error {
+	p := msg.Addr{}
+	if err := msg.Unpack(payload, &p); err != nil {
+		return err
+	}
+	for _, adr := range p.Addr {
+		tcpadr, err := adr.Addr.TCPAddr()
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+		Add(tcpadr)
+	}
+
+	return nil
+}

@@ -40,7 +40,7 @@ var (
 	//PoWFunc is a func to calculate PoW.
 	PoWFunc = func(height int, data []byte) []byte {
 		if height >= 450000 {
-			converted, err := lyra2re2.Lyra2re2(data)
+			converted, err := lyra2re2.Sum(data)
 			if err != nil {
 				log.Fatal(err)
 			}

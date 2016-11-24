@@ -42,12 +42,31 @@ import (
 
 var (
 	alive = make(map[string]*Peer)
+	peers = make(map[string]*net.TCPAddr)
 	mutex sync.RWMutex
 )
 
 const (
 	maxNodes = 5
 )
+
+//Add adds tcpaddr as a candidate peer.
+func Add(n *net.TCPAddr) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	if _, ok := peers[n.String()]; ok {
+		return
+	}
+	peers[n.String()] = n
+}
+
+//Del deletes tcpaddr from peer list..
+func Del(n net.Addr) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	delete(peers, n.String())
+	delete(alive, n.String())
+}
 
 //Resolve resolvs node addresses from the dns seed.
 func Resolve() {
@@ -67,17 +86,47 @@ func Resolve() {
 					log.Println(err)
 					continue
 				}
-				if _, ok := alive[n.String()]; ok {
-					continue
-				}
-				log.Println("adding node", addr)
-				if err := Connect(n); err != nil {
-					log.Println(err)
-				}
+				Add(n)
 			}
 		}()
 		wg.Wait()
 	}
+}
+
+//Connect connects to node ,send a version packet,
+//and returns Node struct.
+func Connect() error {
+	for _, addr := range peers {
+		if length() > maxNodes {
+			return nil
+		}
+		conn, err := net.DialTCP("tcp", nil, addr)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		n := &Peer{conn: conn}
+		mutex.Lock()
+		alive[n.String()] = n
+		mutex.Unlock()
+		log.Println("connecting ", n.String())
+		go func(nn *Peer) {
+			defer func() {
+				Del(nn.conn.RemoteAddr())
+			}()
+			if err = n.Handshake(); err != nil {
+				log.Println(err)
+				return
+			}
+			if errr := nn.Loop(); errr != nil {
+				log.Println(errr)
+			}
+		}(n)
+	}
+	if length() < maxNodes {
+		log.Println("shortage of nodes")
+	}
+	return nil
 }
 
 func length() int {
@@ -89,18 +138,13 @@ func length() int {
 //Run starts to connect nodes.
 func Run() {
 	Resolve()
+	Connect()
 	time.Sleep(30 * time.Second)
 	goGetHeader()
 	goGetMerkle()
 	go func() {
 		for range time.Tick(5 * time.Minute) {
-			cnt := 0
-			for ; cnt < 5 && length() < maxNodes; cnt++ {
-				Resolve()
-			}
-			if cnt == 5 {
-				log.Println("no nodes.")
-			}
+			Connect()
 		}
 	}()
 }
