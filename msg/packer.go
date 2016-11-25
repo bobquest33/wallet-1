@@ -68,9 +68,21 @@ func Pack(buf io.Writer, t interface{}) error {
 		case byte:
 			result = []byte{dat}
 			val = uint64(dat)
+		case bool:
+			if dat {
+				result = []byte{1}
+			} else {
+				result = []byte{0}
+			}
 		case []byte:
 			var err error
-			result, err = makeBytesFromTag(ty.Field(i).Tag, val)
+			tag := ty.Field(i).Tag
+			if tag.Get("len") == "prev" {
+				result = int2varint(uint64(len(dat)))
+				result = append(result, dat...)
+				break
+			}
+			result, err = makeBytesFromTag(tag, val)
 			if err != nil {
 				return err
 			}
@@ -90,6 +102,11 @@ func Pack(buf io.Writer, t interface{}) error {
 					return err
 				}
 			case reflect.Slice:
+				if ty.Field(i).Tag.Get("len") == "prev" {
+					if _, err := buf.Write(int2varint(uint64(f.Len()))); err != nil {
+						return err
+					}
+				}
 				for ii := 0; ii < f.Len(); ii++ {
 					if err := Pack(buf, f.Index(ii).Interface()); err != nil {
 						return err
@@ -149,6 +166,16 @@ func Unpack(buf io.Reader, t interface{}) error {
 			dat := binary.LittleEndian.Uint16(b)
 			result = dat
 			val = uint64(dat)
+		case bool:
+			bs := make([]byte, 1)
+			if _, err := io.ReadFull(buf, bs); err != nil {
+				return err
+			}
+			if bs[0] == 0 {
+				result = false
+			} else {
+				result = true
+			}
 		case byte:
 			bs := make([]byte, 1)
 			if _, err := io.ReadFull(buf, bs); err != nil {
@@ -174,7 +201,14 @@ func Unpack(buf io.Reader, t interface{}) error {
 			}
 			result = string(b)
 		case []byte:
+			var err error
 			tag := ty.Field(i).Tag
+			if tag.Get("len") == "prev" {
+				val, err = byte2varint(buf)
+				if err != nil {
+					return err
+				}
+			}
 			dat, err := makeBytesFromTag(tag, val)
 			if err != nil {
 				return err
@@ -190,7 +224,15 @@ func Unpack(buf io.Reader, t interface{}) error {
 					return err
 				}
 			case reflect.Slice:
-				newv, err := makeValueFromTag(ty.Field(i).Tag, val, vi)
+				tag := ty.Field(i).Tag
+				var err error
+				if tag.Get("len") == "prev" {
+					val, err = byte2varint(buf)
+					if err != nil {
+						return err
+					}
+				}
+				newv, err := makeValueFromTag(tag, val, vi)
 				if err != nil {
 					return err
 				}
@@ -215,10 +257,12 @@ func getTagValue(tag reflect.StructTag, val uint64) (int, error) {
 	le := tag.Get("len")
 	var n int
 	var err error
-	switch {
-	case le == "var":
+	switch le {
+	case "var":
+		fallthrough
+	case "prev":
 		n = int(val)
-	case le == "":
+	case "":
 		err = fmt.Errorf("no len tag")
 	default:
 		n, err = strconv.Atoi(le)

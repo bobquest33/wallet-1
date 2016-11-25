@@ -153,7 +153,6 @@ func getheaders() msg.Getheaders {
 	h := block.LocatorHash()
 	return msg.Getheaders{
 		Version:   params.ProtocolVersion,
-		HashCount: msg.VarInt(len(h)),
 		LocHashes: h,
 		HashStop:  nil,
 	}

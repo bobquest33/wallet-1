@@ -35,16 +35,28 @@ import (
 
 	"math"
 
+	"bytes"
+
+	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/behex"
+	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/key"
 	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/params"
 )
 
-import "bytes"
+func setup() {
+	err := db.DB.Update(func(tx *bolt.Tx) error {
+		var height uint64 = 100
+		return db.Put(tx, "tail", make([]byte, 32), db.MustTob(height))
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
 func TestCreate2(t *testing.T) {
-	coins = make(map[string]Coins)
+	setup()
 	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
 
 	//MTi4x2NtDpdyXSwEvwU3aZ1Uronz1JBNC3
@@ -95,12 +107,12 @@ func TestCreate2(t *testing.T) {
 			TxHash:   ha,
 			Value:    values[i],
 			Ttype:    0,
-			Height:   -20,
+			Height:   0,
 			Script:   script,
 			TxIndex:  uint32(i + 1),
 			Coinbase: false,
 		}
-		coins[string(pkey.Serialize())] = append(coins[string(pkey.Serialize())], coin)
+		saveCoin(coin)
 	}
 	pi := &PubInfo{
 		Pubs:   []*key.PublicKey{pkey2.PublicKey, pkey3.PublicKey, pkey.PublicKey},
@@ -192,7 +204,7 @@ func TestCreate2(t *testing.T) {
 }
 
 func TestCreate1(t *testing.T) {
-	coins = make(map[string]Coins)
+	setup()
 	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
 
 	//MTi4x2NtDpdyXSwEvwU3aZ1Uronz1JBNC3
@@ -229,12 +241,12 @@ func TestCreate1(t *testing.T) {
 			TxHash:   ha,
 			Value:    values[i],
 			Ttype:    0,
-			Height:   -20,
+			Height:   0,
 			Script:   script,
 			TxIndex:  uint32(i + 1),
 			Coinbase: false,
 		}
-		coins[string(pkey.Serialize())] = append(coins[string(pkey.Serialize())], coin)
+		saveCoin(coin)
 	}
 	send := &Send{
 		Addr:   "MS43dMzRKfEs99Q931zFECfUhdvtWmbsPt",

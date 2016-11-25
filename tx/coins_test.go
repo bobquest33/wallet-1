@@ -34,13 +34,30 @@ import (
 	"log"
 	"testing"
 
+	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/behex"
+	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/key"
 	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/params"
 )
 
-func addpubkey(addr string) string {
+func del() {
+	errr := db.DB.Update(func(tx *bolt.Tx) error {
+		if err := tx.DeleteBucket([]byte("key")); err != nil {
+			return err
+		}
+		if err := tx.DeleteBucket([]byte("coin")); err != nil {
+			return err
+		}
+		return nil
+	})
+	if errr != nil {
+		log.Print(errr)
+	}
+}
+
+func addpubkey(addr string) *key.PublicKey {
 	a, err := hex.DecodeString(addr)
 	if err != nil {
 		log.Fatal(err)
@@ -49,14 +66,18 @@ func addpubkey(addr string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	priv := &key.PrivateKey{
-		PrivateKey: nil,
-		PublicKey:  pub,
+	p, err := key.Generate()
+	if err != nil {
+		log.Fatal(err)
 	}
-	ad, _ := pub.Address()
-	log.Println("added", ad)
-	key.Add(priv)
-	return string(a)
+	//only for test
+	err = db.DB.Update(func(tx *bolt.Tx) error {
+		return db.Put(tx, "key", a, p.Serialize())
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	return pub
 }
 
 func maketx(stx []string) []*msg.Tx {
@@ -81,8 +102,7 @@ func maketx(stx []string) []*msg.Tx {
 }
 
 func TestTx1(t *testing.T) {
-	coins = make(map[string]Coins)
-
+	del()
 	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
 
 	// MQesEqAZNxeNNHS2XDNy23ozchyt1PXX2G
@@ -94,27 +114,40 @@ func TestTx1(t *testing.T) {
 		// MQesEqAZNxeNNHS2XDNy23ozchyt1PXX2G -> 50mona
 		"010000000188fa5c97be66845170db81a582888c55b24ca78943314f0a2d63c0b252854b4b000000006b483045022100a2e4bdc593bacb5918ac06dd6a718087c202dd7b8a8f5b62a243320c79c0629c022018e857dcdaa1afada0ebdf9b3f1086a95a70852d64fafd9d5233815392e5f81801210341573692e18d367df964ba1effc151c5952a6128a0f973cb5006b0151d32e517ffffffff04e2d10e06000000001976a914872455664fee9e4e9b5985f7ff09a3dfbd73bae688acaff98441000000001976a91431f10038a4debd33ca2d1c675575dc419b4b5fa288ac3a6eff6b000000001976a9146c1d53b7b5c18f34ad012c15439e4a0deb7c6b7988ac35b87276000000001976a914da2f111a4e3e2e88947577ae06b8e31958c887e788ac00000000",
 	}
+	coins, err := getCoins(nil)
+	if len(coins) != 0 {
+		t.Fatal(len(coins))
+	}
 	a := addpubkey(addr)
 	txs := maketx(stx)
-	if err := Add(txs[0], -20); err != nil {
+	if err = Add(txs[0], 0); err != nil {
 		t.Fatal(err)
 	}
-	if len(coins[a]) != 1 {
-		t.Fatal("could not add coin")
-	}
-	if coins[a][0].Value != 50*params.Unit {
-		t.Fatal("value differes", coins[a][0].Value)
-	}
-	if err := Add(txs[1], -20); err != nil {
+	coins, err = getCoins(a)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(coins[a]) != 0 {
-		t.Fatal("cound not remove coin", len(coins[a]))
+	if len(coins) != 1 {
+		t.Fatal("could not add coin", len(coins))
+	}
+	if coins[0].Value != 50*params.Unit {
+		t.Fatal("value differes", coins[0].Value)
+	}
+	log.Println("adding tx")
+	if err = Add(txs[1], 0); err != nil {
+		t.Fatal(err)
+	}
+	coins, err = getCoins(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(coins) != 0 {
+		t.Fatal("cound not remove coin", len(coins))
 	}
 }
 
 func TestTx2(t *testing.T) {
-	coins = make(map[string]Coins)
+	del()
 
 	// MUW2hLe4EMbxBERpoavpv7bz1LKXEnR4qw
 	addr := "03f696acc30af622a3fdb489ff3b8ce1b2c9833f2053c842d3e83bb17b89ac8ca4"
@@ -128,20 +161,28 @@ func TestTx2(t *testing.T) {
 	a := addpubkey(addr)
 	txs := maketx(stx)
 	log.Println(behex.EncodeToString(txs[0].Hash()))
-	if err := Add(txs[0], -20); err != nil {
+	if err := Add(txs[0], 0); err != nil {
 		t.Fatal(err)
 	}
-	if len(coins[a]) != 1 {
+	coins, err := getCoins(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(coins) != 1 {
 		t.Fatal("cound not add coin")
 	}
-	if coins[a][0].Value != 100*params.Unit {
-		t.Fatal("value differes", coins[a][0].Value)
+	if coins[0].Value != 100*params.Unit {
+		t.Fatal("value differes", coins[0].Value)
 	}
 	log.Println(behex.EncodeToString(txs[1].Hash()))
-	if err := Add(txs[1], -20); err != nil {
+	if err := Add(txs[1], 0); err != nil {
 		t.Fatal(err)
 	}
-	if len(coins[a]) != 0 {
-		t.Fatal("cound not remove coin", len(coins[a]))
+	coins, err = getCoins(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(coins) != 0 {
+		t.Fatal("cound not remove coin", len(coins))
 	}
 }

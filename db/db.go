@@ -43,19 +43,17 @@ import (
 
 /*
 bucket key value
-block hash height
-rblock height hash
+
+block hash [](height,ancestor hash)
 tails hash height
 key pub priv
 coin hash json(Coin)
-vcoin value hash
 */
 
 //DB is bolt.DB for operating database.
 var DB *bolt.DB
 
-//Setup setups db.
-func Setup() {
+func init() {
 	dbpath := path.Join(".", "monarj_wallet.db")
 	var err error
 	DB, err = bolt.Open(dbpath, 0644, nil)
@@ -110,8 +108,8 @@ func ToKey(v ...interface{}) []byte {
 	return r
 }
 
-//b2v converts from 'from' to 'to' according to 'to' type.
-func b2v(from []byte, to interface{}) error {
+//B2v converts from 'from' to 'to' according to 'to' type.
+func B2v(from []byte, to interface{}) error {
 	var err error
 	switch t := to.(type) {
 	case *string:
@@ -140,7 +138,7 @@ func Get(tx *bolt.Tx, bucket string, key []byte, value interface{}) ([]byte, err
 	if v == nil {
 		return nil, errors.New("key not found")
 	}
-	return v, b2v(v, value)
+	return v, B2v(v, value)
 }
 
 //Put sets one key/value pair.
@@ -191,7 +189,7 @@ func GetStrings(tx *bolt.Tx, bucket string, prefix []byte) ([]string, error) {
 	c := b.Cursor()
 	for k, v := c.Seek(prefix); bytes.HasPrefix(k, prefix); k, v = c.Next() {
 		var str string
-		if err := b2v(v, &str); err != nil {
+		if err := B2v(v, &str); err != nil {
 			return nil, err
 		}
 		cnt = append(cnt, str)
@@ -208,7 +206,7 @@ func KeyStrings(tx *bolt.Tx, bucket string) ([]string, error) {
 	}
 	err := b.ForEach(func(k, v []byte) error {
 		var str string
-		if err := b2v(k, &str); err != nil {
+		if err := B2v(k, &str); err != nil {
 			return err
 		}
 		cnt = append(cnt, str)

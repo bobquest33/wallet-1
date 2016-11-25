@@ -95,6 +95,19 @@ func FromWIF(wif string) (*PrivateKey, error) {
 	}, nil
 }
 
+//NewPrivateKey creates and returns PrivateKey from bytes.
+func NewPrivateKey(pb []byte) *PrivateKey {
+	secp256k1 := btcec.S256()
+	priv, pub := btcec.PrivKeyFromBytes(secp256k1, pb)
+	return &PrivateKey{
+		PrivateKey: priv,
+		PublicKey: &PublicKey{
+			PublicKey:    pub,
+			isCompressed: true,
+		},
+	}
+}
+
 //Generate generates random PublicKey and PrivateKey.
 func Generate() (*PrivateKey, error) {
 	secp256k1 := btcec.S256()

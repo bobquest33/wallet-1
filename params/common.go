@@ -38,7 +38,7 @@ import (
 
 var (
 	//PoWFunc is a func to calculate PoW.
-	PoWFunc = func(height int, data []byte) []byte {
+	PoWFunc = func(height uint64, data []byte) []byte {
 		if height >= 450000 {
 			converted, err := lyra2re2.Sum(data)
 			if err != nil {
@@ -67,7 +67,7 @@ const (
 	//UserAgent is the user agent.
 	UserAgent = "/monarj:" + Version + "/"
 	//Nconfirmed is the block height block is regarded as confirmed.
-	Nconfirmed = 5
+	Nconfirmed uint64 = 5
 	//Unit is base unit.
 	Unit = 100000000
 	//Fee for a transaction

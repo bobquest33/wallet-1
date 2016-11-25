@@ -117,7 +117,7 @@ func (b *HBlockHeader) target() []byte {
 }
 
 //IsOK returns error is something in header is wrong.
-func (b *HBlockHeader) IsOK(height int) error {
+func (b *HBlockHeader) IsOK(height uint64) error {
 	var buf bytes.Buffer
 	if err := Pack(&buf, *b); err != nil {
 		return err
@@ -152,8 +152,7 @@ type Version struct {
 
 //Inv allows a node to advertise its knowledge of one or more objects
 type Inv struct {
-	Count     VarInt
-	Inventory []InvVec `len:"var"`
+	Inventory []InvVec `len:"prev"`
 }
 
 //Getdata is used in response to inv, to retrieve the content of a
@@ -174,8 +173,7 @@ type Hash struct {
 //up to hash_stop or 500 blocks, whichever comes first.
 type Getblocks struct {
 	Version   uint32
-	HashCount VarInt
-	LocHashes []Hash `len:"var"`
+	LocHashes []Hash `len:"prev"`
 	HashStop  []byte `len:"32"`
 }
 
@@ -194,33 +192,28 @@ type Pong Ping
 
 //Headers packet returns block headers in response to a getheaders packet.
 type Headers struct {
-	Count     VarInt
-	Inventory []BlockHeader `len:"var"`
+	Inventory []BlockHeader `len:"prev"`
 }
 
 //TxIn is the info of input transaction.
 type TxIn struct {
-	Hash      []byte `len:"32"`
-	Index     uint32
-	ScriptLen VarInt
-	Script    []byte `len:"var"`
-	Seq       uint32
+	Hash   []byte `len:"32"`
+	Index  uint32
+	Script []byte `len:"prev"`
+	Seq    uint32
 }
 
 //TxOut is the info of output transaction.
 type TxOut struct {
-	Value     uint64
-	ScriptLen VarInt
-	Script    []byte `len:"var"`
+	Value  uint64
+	Script []byte `len:"prev"`
 }
 
 //Tx describes a bitcoin transaction,
 type Tx struct {
 	Version  uint32
-	InCount  VarInt
-	TxIn     []TxIn `len:"var"`
-	OutCount VarInt
-	TxOut    []TxOut `len:"var"`
+	TxIn     []TxIn  `len:"prev"`
+	TxOut    []TxOut `len:"prev"`
 	Locktime uint32
 }
 
@@ -231,8 +224,7 @@ func (b *Tx) Hash() []byte {
 
 //Addr provides information on known nodes of the network
 type Addr struct {
-	Count VarInt
-	Addr  []NetAddrTime `len:"var"`
+	Addr []NetAddrTime `len:"prev"`
 }
 
 //NetAddr represents network addres. for now it's just a dummy.
@@ -271,10 +263,8 @@ type NetAddrTime struct {
 type Merkleblock struct {
 	HBlockHeader
 	Total  uint32
-	Nhash  VarInt
-	Hashes []Hash `len:"var"`
-	NFlags VarInt
-	Flags  []byte `len:"var"`
+	Hashes []Hash `len:"prev"`
+	Flags  []byte `len:"prev"`
 }
 
 type merkle struct {
@@ -357,16 +347,15 @@ func (m *Merkleblock) FilteredTx() ([]Hash, error) {
 			behex.EncodeToString(m.Merkle), behex.EncodeToString(mmm.Hash))
 		return me.tx, err
 	}
-	if int(m.Nhash) != me.nHash {
-		err = fmt.Errorf("not use all hashes %d %d", m.Nhash, me.nHash)
+	if len(m.Hashes) != me.nHash {
+		err = fmt.Errorf("not use all hashes %d %d", len(m.Hashes), me.nHash)
 	}
 	return me.tx, err
 }
 
 //FilterLoad sets the current Bloom filter on the connection
 type FilterLoad struct {
-	NFilter    VarInt
-	Filter     []byte `len:"var"`
+	Filter     []byte `len:"prev"`
 	NhashFuncs uint32
 	NTweak     uint32
 	Nflags     byte
@@ -375,6 +364,5 @@ type FilterLoad struct {
 //FilterAdd adds the given data element to the connections
 //current filter without requiring a completely new one to be set
 type FilterAdd struct {
-	Ndata VarInt
-	Data  []byte `len:"var"`
+	Data []byte `len:"prev"`
 }

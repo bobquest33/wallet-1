@@ -52,6 +52,7 @@ type S1 struct {
 	VS  string
 	ST  S3
 	STA []S3 `len:"2"`
+	STB []S3 `len:"prev"`
 }
 
 var s1 = S1{
@@ -72,6 +73,9 @@ var s1 = S1{
 	[]S3{
 		{0x34}, {0x35},
 	},
+	[]S3{
+		{0x21}, {0x22},
+	},
 }
 var result = []byte{
 	0x39, 0x30, 0, 0, 0, 0, 0, 0, //8
@@ -86,9 +90,10 @@ var result = []byte{
 	0xff, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00, 0x00, //9
 	0x05,                         //1
 	0x61, 0x62, 0x63, 0x64, 0x65, //5
-	0x12, //1
-	0x34, //1
-	0x35, //1
+	0x12,             //1
+	0x34,             //1
+	0x35,             //1
+	0x02, 0x21, 0x22, //3
 }
 
 func TestPack(t *testing.T) {
@@ -153,5 +158,14 @@ func TestUnpack1(t *testing.T) {
 	}
 	if s1.STA[1].B != s2.STA[1].B {
 		t.Fatal("STA[1].B not match")
+	}
+	if len(s1.STB) != 2 {
+		t.Fatal("len(STB) not match")
+	}
+	if s1.STB[0].B != s2.STB[0].B {
+		t.Fatal("STB[0].B not match")
+	}
+	if s1.STB[1].B != s2.STB[1].B {
+		t.Fatal("STB[1].B not match")
 	}
 }

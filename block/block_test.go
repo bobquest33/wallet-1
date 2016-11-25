@@ -34,8 +34,11 @@ import (
 	"log"
 	"testing"
 
+	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/behex"
+	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/msg"
+	"github.com/monarj/wallet/params"
 )
 
 var sheaders = []string{
@@ -54,6 +57,8 @@ var (
 )
 
 func init() {
+	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
+
 	hs = make([]msg.BlockHeader, len(sheaders))
 	for i, h := range sheaders {
 		ha, err := hex.DecodeString(h)
@@ -75,16 +80,11 @@ func init() {
 			log.Fatal(err)
 		}
 	}
+
 }
 
-func TestBlock(t *testing.T) {
-	tails = make(map[string]*Block)
-	blocks = make(map[string]*Block)
-	lastBlock = genesis
-	tails[string(genesis.block.Hash())] = genesis
-	blocks[string(genesis.block.Hash())] = genesis
+func TestBlock2(t *testing.T) {
 	headers := msg.Headers{
-		Count:     msg.VarInt(3),
 		Inventory: hs,
 	}
 	var err error
@@ -98,42 +98,125 @@ func TestBlock(t *testing.T) {
 			t.Fatal("hash unmatch", i)
 		}
 	}
-	if tails[string(hash[len(hash)-1])].Height != len(hash) {
-		t.Fatalf("illegal tail height")
+	height, err := Height(hash[len(hash)-1])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(blocks) != len(hash)+1 {
-		t.Fatalf("illegal block number")
+	if height != uint64(len(hash)) {
+		t.Fatalf("illegal tail height %d", height)
+	}
+	var l *List
+	err = db.DB.View(func(tx *bolt.Tx) error {
+		var errr error
+		l, errr = loadBlock(tx, hash[2])
+		return errr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Ancestors) != 2 {
+		t.Fatal("illegal len of ancestors", len(l.Ancestors))
+	}
+	if !bytes.Equal(l.Ancestors[0].Hash, params.GenesisHash) {
+		t.Error("illegal ancestors[0]")
+	}
+	if !bytes.Equal(l.Ancestors[1].Hash, hash[1]) {
+		t.Error("illegal ancestors[1]")
+	}
+	last, lheight := Lastblock()
+	if !bytes.Equal(last, hash[len(hash)-1]) {
+		t.Error("tail unmatched")
+	}
+	if lheight != uint64(len(hash)) {
+		t.Error("illegal lastblock")
+	}
+
+	err = db.DB.Update(func(tx *bolt.Tx) error {
+		for _, h := range hash {
+			err = db.Del(tx, "block", h)
+			if err != nil {
+				log.Print(err)
+			}
+			err = db.Del(tx, "tail", h)
+			if err != nil {
+				log.Print(err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
 	}
 }
 
-func TestBlock2(t *testing.T) {
-	tails = make(map[string]*Block)
-	blocks = make(map[string]*Block)
-	lastBlock = genesis
-	tails[string(genesis.block.Hash())] = genesis
-	blocks[string(genesis.block.Hash())] = genesis
-
-	hss := append(hs[:1], hs[2:]...)
+func TestBlock1(t *testing.T) {
+	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
+	hss := make([]msg.BlockHeader, 2)
+	hss[0] = hs[0]
+	hss[1] = hs[2]
 	headers := msg.Headers{
-		Count:     msg.VarInt(len(hs)),
 		Inventory: hss,
 	}
-	var err error
-	hashh, err := Add(headers)
+	_, err := Add(headers)
 	log.Println(err)
 	if err == nil {
 		t.Fatal("cannot detect orphan block")
 	}
-	log.Println(len(hashh))
-	for i, hh := range hashh {
-		if !bytes.Equal(hash[i], hh) {
-			t.Fatal("hash unmatch", i)
+	err = db.DB.Update(func(tx *bolt.Tx) error {
+		for _, h := range hash {
+			err = db.Del(tx, "block", h)
+			if err != nil {
+				log.Print(err)
+			}
+			err = db.Del(tx, "tail", h)
+			if err != nil {
+				log.Print(err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+//need to test locatorhash more
+func TestLocator(t *testing.T) {
+	headers := msg.Headers{
+		Inventory: hs,
+	}
+	var err error
+
+	_, err = Add(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := LocatorHash()
+	if len(h) != 4 {
+		t.Fatal("illegal length of locator", len(h))
+	}
+	for i, lh := range hash {
+		if !bytes.Equal(h[len(h)-i-2].Hash, lh) {
+			t.Fatal("illegal locator", i)
 		}
 	}
-	if _, ok := tails[string(hash[0])]; !ok {
-		t.Fatalf("illegal tail")
+	if !bytes.Equal(h[len(h)-1].Hash, params.GenesisHash) {
+		t.Fatal("illegal locator")
 	}
-	if len(blocks) != 2 {
-		t.Fatalf("illegal block number %d", len(blocks))
+	err = db.DB.Update(func(tx *bolt.Tx) error {
+		for _, h := range hash {
+			err = db.Del(tx, "block", h)
+			if err != nil {
+				log.Print(err)
+			}
+			err = db.Del(tx, "tail", h)
+			if err != nil {
+				log.Print(err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
 	}
 }

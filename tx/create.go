@@ -63,9 +63,8 @@ func p2pkTtxout(send *Send) (*msg.TxOut, error) {
 	script = append(script, addr...)
 	script = append(script, opEQUALVERIFY, opCHECKSIG)
 	return &msg.TxOut{
-		Value:     send.Amount,
-		ScriptLen: msg.VarInt(len(script)),
-		Script:    script,
+		Value:  send.Amount,
+		Script: script,
 	}, nil
 }
 
@@ -90,7 +89,7 @@ func newTxins(total uint64) ([]msg.TxIn, []*key.PrivateKey, *msg.TxOut, error) {
 	var privs []*key.PrivateKey
 	for i := 0; i < len(coins) && amount < total; i++ {
 		c := coins[i]
-		height := block.Last().Height
+		_, height := block.Lastblock()
 		if c.Coinbase && height-c.Height < params.SpendableCoinbaseDepth {
 			log.Println("unspendable coinbase because of height")
 			continue
@@ -100,11 +99,10 @@ func newTxins(total uint64) ([]msg.TxIn, []*key.PrivateKey, *msg.TxOut, error) {
 			continue
 		}
 		txins = append(txins, msg.TxIn{
-			Hash:      c.TxHash,
-			Index:     c.TxIndex,
-			ScriptLen: msg.VarInt(len(c.Script)),
-			Script:    c.Script, //pubscript to sign.
-			Seq:       math.MaxUint32,
+			Hash:   c.TxHash,
+			Index:  c.TxIndex,
+			Script: c.Script, //pubscript to sign.
+			Seq:    math.MaxUint32,
 		})
 		pub, err := key.NewPublicKey(c.Pubkey)
 		if err != nil {
@@ -165,7 +163,6 @@ func fillSign(result *msg.Tx, privs []*key.PrivateKey) error {
 		scr = append(scr, byte(len(pub)))
 		scr = append(scr, pub...)
 		result.TxIn[i].Script = scr
-		result.TxIn[i].ScriptLen = msg.VarInt(len(scr))
 	}
 	return nil
 }
@@ -185,9 +182,7 @@ func NewP2PK(sends ...*Send) (*msg.Tx, error) {
 	}
 	result := msg.Tx{
 		Version:  1,
-		InCount:  msg.VarInt(len(txins)),
 		TxIn:     txins,
-		OutCount: msg.VarInt(len(txouts)),
 		TxOut:    txouts,
 		Locktime: 0,
 	}
@@ -240,9 +235,8 @@ func (p *PubInfo) MultisigOut() (*msg.Tx, error) {
 	}
 	txouts := make([]msg.TxOut, 1, 2)
 	txouts[0] = msg.TxOut{
-		Value:     p.Amount,
-		ScriptLen: msg.VarInt(len(script)),
-		Script:    script,
+		Value:  p.Amount,
+		Script: script,
 	}
 	txins, privs, mto, err := newTxins(p.Amount + params.Fee)
 	if err != nil {
@@ -253,9 +247,7 @@ func (p *PubInfo) MultisigOut() (*msg.Tx, error) {
 	}
 	result := msg.Tx{
 		Version:  1,
-		InCount:  msg.VarInt(len(txins)),
 		TxIn:     txins,
-		OutCount: msg.VarInt(len(txouts)),
 		TxOut:    txouts,
 		Locktime: 0,
 	}
@@ -296,17 +288,14 @@ func (p *PubInfo) txForSign(seq, locktime uint32, sends ...*Send) (*msg.Tx, erro
 	}
 	script := p.Prev.TxOut[index].Script
 	mtxin := msg.TxIn{
-		Hash:      p.Prev.Hash(),
-		Index:     index,
-		ScriptLen: msg.VarInt(len(script)),
-		Script:    script,
-		Seq:       seq,
+		Hash:   p.Prev.Hash(),
+		Index:  index,
+		Script: script,
+		Seq:    seq,
 	}
 	mtx := msg.Tx{
 		Version:  1,
-		InCount:  1,
 		TxIn:     []msg.TxIn{mtxin},
-		OutCount: msg.VarInt(len(txouts)),
 		TxOut:    txouts,
 		Locktime: locktime,
 	}
@@ -380,7 +369,6 @@ func (p *PubInfo) MultisigIn(seq, locktime uint32, sigs [][]byte, sends ...*Send
 	}
 	script2 = append(script2, opPUSHDATA1, byte(len(redeem)))
 	script2 = append(script2, redeem...)
-	mtx.TxIn[0].ScriptLen = msg.VarInt(len(script2))
 	mtx.TxIn[0].Script = script2
 
 	return mtx, nil

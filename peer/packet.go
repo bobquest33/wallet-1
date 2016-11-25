@@ -201,7 +201,6 @@ func (n *Peer) writeFilterload() error {
 		aa[i] = 0xff
 	}
 	po := msg.FilterLoad{
-		NFilter: msg.VarInt(bloom.Bytelen),
 		//Filter:  []byte(bf),
 		Filter: aa,
 
@@ -220,8 +219,7 @@ func (n *Peer) writeFilteradd(data [][]byte) error {
 		bf.Insert(k)
 	}
 	po := msg.FilterAdd{
-		Ndata: msg.VarInt(bloom.Bytelen),
-		Data:  []byte(bf),
+		Data: []byte(bf),
 	}
 	err := n.writeMessage("filteradd", po)
 	log.Println("sended filteradd")
@@ -256,7 +254,6 @@ func makeInv(t uint32, hash [][]byte) msg.Inv {
 		vec[i].Hash = h
 	}
 	return msg.Inv{
-		Count:     msg.VarInt(len(hash)),
 		Inventory: vec,
 	}
 }
@@ -282,7 +279,7 @@ func (n *Peer) readHeaders(payload io.Reader, pch <-chan *packet) error {
 	return err
 }
 
-func (n *Peer) readTx(payload io.Reader, txs []msg.Hash, height int) error {
+func (n *Peer) readTx(payload io.Reader, txs []msg.Hash, height uint64) error {
 	p := msg.Tx{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -326,7 +323,7 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	if len(txs) == 0 {
 		return nil
 	}
-	height := block.Height(hblock)
+	_, height := block.Lastblock()
 	if height < 0 {
 		err = errors.New("no merkle hash in the chain." + behex.EncodeToString(p.Hash()))
 		return err

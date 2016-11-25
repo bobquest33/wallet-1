@@ -36,13 +36,14 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/behex"
+	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/key"
 	"github.com/monarj/wallet/msg"
 )
 
 var (
-	coins  = make(map[string]Coins)
 	notify = make(map[string]chan *msg.Tx)
 	mutex  sync.RWMutex
 )
@@ -74,34 +75,68 @@ func (c Coins) Swap(i, j int) {
 	c[i], c[j] = c[j], c[i]
 }
 
+func getCoins(pub *key.PublicKey) (Coins, error) {
+	var coins Coins
+	var spub []byte
+	if pub != nil {
+		spub = pub.Serialize()
+	}
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte("coin"))
+		if bucket == nil {
+			return nil
+		}
+		c := bucket.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			l := &Coin{}
+			errr := msg.Unpack(bytes.NewBuffer(v), l)
+			if errr != nil {
+				return errr
+			}
+			if spub == nil || bytes.Equal(l.Pubkey, spub) {
+				coins = append(coins, l)
+			}
+		}
+		return nil
+	})
+	return coins, err
+}
+
 //SortedCoins returns value-sorted coins that cointans all address.
 func SortedCoins() Coins {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	var c Coins
-	for _, v := range coins {
-		c = append(c, v...)
+	coins, err := getCoins(nil)
+	if err != nil {
+		log.Fatal(err)
 	}
-	sort.Sort(c)
-	return c
+	sort.Sort(coins)
+	return coins
+}
+
+func saveCoin(l *Coin) error {
+	dat := bytes.Buffer{}
+	if err := msg.Pack(&dat, *l); err != nil {
+		return err
+	}
+	return db.DB.Update(func(tx *bolt.Tx) error {
+		k := db.ToKey(l.TxHash, l.TxIndex)
+		return db.Put(tx, "coin", k, dat.Bytes())
+	})
 }
 
 //Coin represents an available transaction.
 type Coin struct {
-	Pubkey   []byte
-	TxHash   []byte
+	Pubkey   []byte `len:"prev"`
+	TxHash   []byte `len:"32"`
 	Value    uint64
-	Ttype    int
-	Height   int
-	Script   []byte
+	Ttype    byte
+	Height   uint64
+	Script   []byte `len:"prev"`
 	TxIndex  uint32
 	Coinbase bool
 }
 
 func add(pub *key.PublicKey, tx *msg.Tx, index uint32,
-	ttype int, height int, coinbase bool, script []byte) {
-	mutex.Lock()
-	defer mutex.Unlock()
+	ttype byte, height uint64, coinbase bool, script []byte) error {
 	a := pub.Serialize()
 	c := &Coin{
 		Pubkey:   a,
@@ -113,24 +148,41 @@ func add(pub *key.PublicKey, tx *msg.Tx, index uint32,
 		Coinbase: coinbase,
 		Script:   script,
 	}
-	coins[string(a)] = append(coins[string(a)], c)
+	return saveCoin(c)
 }
 
-func remove(pub *key.PublicKey, hash []byte, index uint32) error {
-	mutex.Lock()
-	defer mutex.Unlock()
-	a := string(pub.Serialize())
-	coin := coins[a]
-	for i, c := range coin {
-		if bytes.Equal(c.TxHash, hash) && c.TxIndex == index {
-			coin[i] = coin[len(coin)-1]
-			coin[len(coin)-1] = nil
-			coin = coin[:len(coin)-1]
-			coins[a] = coin
-			return nil
-		}
+//RemoveKey removes coins associated with pub.
+func RemoveKey(pub *key.PublicKey) error {
+	coin, err := getCoins(pub)
+	if err != nil {
+		return err
 	}
-	return errors.New("coin was not found")
+	err = db.DB.Update(func(tx *bolt.Tx) error {
+		for _, c := range coin {
+			if errr := db.Del(tx, "coin", db.ToKey(c.TxHash, c.TxIndex)); err != nil {
+				return errr
+			}
+		}
+		return nil
+	})
+	return err
+}
+
+//remove removes one tx.
+func remove(hash []byte, index uint32) error {
+	coin, err := getCoins(nil)
+	if err != nil {
+		return err
+	}
+	return db.DB.Update(func(tx *bolt.Tx) error {
+		for _, c := range coin {
+			if bytes.Equal(c.TxHash, hash) && c.TxIndex == index {
+				log.Println("rm")
+				return db.Del(tx, "coin", db.ToKey(c.TxHash, c.TxIndex))
+			}
+		}
+		return errors.New("not found")
+	})
 }
 
 //ScriptSigH is the header of scriptsig this program supports.
@@ -213,10 +265,10 @@ func parseScriptsigT(buf *bytes.Buffer, data []byte) (*ScriptSigT, error) {
 }
 
 //Add adds or removes transanctions from a tx packet.
-func Add(mtx *msg.Tx, height int) error {
+func Add(mtx *msg.Tx, height uint64) error {
 	coinbase := false
+	zero := make([]byte, 32)
 	for _, in := range mtx.TxIn {
-		zero := make([]byte, 32)
 		if bytes.Equal(in.Hash, zero) && in.Index == 0xffffffff {
 			log.Println("coinbase")
 			coinbase = true
@@ -232,12 +284,12 @@ func Add(mtx *msg.Tx, height int) error {
 			log.Println(err)
 			continue
 		}
-		pubkey, err := checkTxin(s)
+		_, err = checkTxin(s)
 		if err != nil {
 			log.Println(err)
 			continue
 		}
-		if err := remove(pubkey, in.Hash, in.Index); err != nil {
+		if err := remove(in.Hash, in.Index); err != nil {
 			log.Println(err)
 		}
 	}
@@ -255,7 +307,7 @@ func Add(mtx *msg.Tx, height int) error {
 
 		var pubkey *key.PublicKey
 		var err error
-		var ttype int
+		var ttype byte
 		switch {
 		case err1 == nil:
 			log.Println("pubkeyhash scriptsig")
@@ -273,7 +325,9 @@ func Add(mtx *msg.Tx, height int) error {
 			log.Println(err, behex.EncodeToString(mtx.Hash()))
 			continue
 		}
-		add(pubkey, mtx, uint32(i), ttype, height, coinbase, in.Script)
+		if err = add(pubkey, mtx, uint32(i), ttype, height, coinbase, in.Script); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -306,11 +360,7 @@ func checkTxout(s *Script) (*key.PublicKey, error) {
 	case s.CheckSig != opCHECKSIG:
 		return nil, errors.New("unsuported scriptsig")
 	}
-	pubkey, has := key.HasPubHash(s.PubHash)
-	if !has {
-		return nil, errors.New("not concerened address")
-	}
-	return pubkey, nil
+	return key.FromPubHash(s.PubHash)
 }
 
 func checkTxout2(s *Script2) (*key.PublicKey, error) {
@@ -321,7 +371,7 @@ func checkTxout2(s *Script2) (*key.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if key.Find(pubkey) != nil {
+	if key.Find(pubkey) == nil {
 		adr, _ := pubkey.Address()
 		return nil, errors.New("not concerened address" + adr)
 	}

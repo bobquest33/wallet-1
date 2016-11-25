@@ -69,7 +69,7 @@ var (
 	//GenesisHash is the hash of genesis blocks.
 	GenesisHash []byte
 	//CheckPoints are points hash should be checked.
-	CheckPoints = make(map[int][]byte)
+	CheckPoints = make(map[uint64][]byte)
 	//DNSSeeds is the list of dns for node seeds.
 	DNSSeeds = []string{
 		"dnsseed.monacoin.org",
@@ -91,7 +91,7 @@ func init() {
 	if GenesisHash, err = behex.DecodeString(hashGenesis); err != nil {
 		log.Fatal(err)
 	}
-	cpoints := map[int]string{
+	cpoints := map[uint64]string{
 		1500:   "9f42d51d18d0a8914a00664c433a0ca4be3eed02f9374d790bffbd3d3053d41d",
 		4000:   "2c60edac7d9f44d90d1e218af2a8085e78b735185c5bf42f9fe9dbd0e604c97b",
 		8000:   "61d4d053b1a4c6deb4c7e806cedd876f25b51da6c51b209109579c7b9892e5c2",
@@ -105,7 +105,6 @@ func init() {
 		444000: "3ed05516cdce4db93b135189592c7e2b37d768f99a1819a1d2ea3a8e5b8439a8",
 		655000: "4c556ef37bc75e95820200d2ae25472d7e2c05a981667beef5b2f6a64b5ce546",
 	}
-
 	for k, v := range cpoints {
 		h, err := behex.DecodeString(v)
 		if err != nil {

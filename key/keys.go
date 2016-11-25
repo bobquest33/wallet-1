@@ -30,21 +30,15 @@ package key
 
 import (
 	"bytes"
+	"errors"
 	"log"
-	"sync"
-)
 
-var (
-	//list is a keylist.
-	list []*PrivateKey
-
-	mutex sync.RWMutex
+	"github.com/boltdb/bolt"
+	"github.com/monarj/wallet/db"
 )
 
 //New creates , registers , and returns a randome key.
 func New() *PrivateKey {
-	mutex.Lock()
-	defer mutex.Unlock()
 	k, err := Generate()
 	if err != nil {
 		log.Fatal(err)
@@ -56,56 +50,72 @@ func New() *PrivateKey {
 //Find returns privatekey from pub.
 //It returns nil if not found.
 func Find(pub *PublicKey) *PrivateKey {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	for _, k := range list {
-		if pub.IsEqual(k.PublicKey.PublicKey) {
-			return k
+	var priv *PrivateKey
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		dat, err := db.Get(tx, "key", pub.Serialize(), nil)
+		if err != nil {
+			return err
 		}
+		priv = NewPrivateKey(dat)
+		return nil
+	})
+	if err != nil {
+		return nil
 	}
-	return nil
+	return priv
 }
 
-//HasPubHash returns true if list has pubhash pubkey.
-func HasPubHash(pubhash []byte) (*PublicKey, bool) {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	for _, k := range list {
-		_, hash := k.PublicKey.Address()
-		if bytes.Equal(pubhash, hash) {
-			return k.PublicKey, true
+//FromPubHash returns pubkey if list has pubhash pubkey.
+func FromPubHash(pubhash []byte) (*PublicKey, error) {
+	var pub *PublicKey
+	errr := db.DB.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte("key")).Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			pubk, err := NewPublicKey(k)
+			if err != nil {
+				return err
+			}
+			_, hash := pubk.Address()
+			if bytes.Equal(pubhash, hash) {
+				pub = pubk
+				return nil
+			}
 		}
-	}
-	return nil, false
+		return errors.New("keyhash not found")
+	})
+	return pub, errr
 }
 
 //Add adds key to key list.
 func Add(k *PrivateKey) {
-	mutex.Lock()
-	defer mutex.Unlock()
-	list = append(list, k)
+	err := db.DB.Update(func(tx *bolt.Tx) error {
+		return db.Put(tx, "key", k.PublicKey.Serialize(), k.Serialize())
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 //Get gets key list.
 func Get() []*PrivateKey {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	l := make([]*PrivateKey, len(list))
-	copy(l, list)
+	var l []*PrivateKey
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte("key")).Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			priv := NewPrivateKey(k)
+			l = append(l, priv)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 	return l
 }
 
 //Remove removes the key from key list.
-func Remove(k *PrivateKey) {
-	mutex.Lock()
-	defer mutex.Unlock()
-	for i, kl := range list {
-		s1, _ := k.PublicKey.Address()
-		s2, _ := kl.PublicKey.Address()
-		if s1 == s2 {
-			list = append(list[:i], list[i+1:]...)
-			list[len(list)-1] = nil
-			return
-		}
-	}
+func Remove(k *PrivateKey) error {
+	return db.DB.Update(func(tx *bolt.Tx) error {
+		return db.Del(tx, "key", k.PublicKey.Serialize())
+	})
 }
