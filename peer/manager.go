@@ -139,7 +139,7 @@ func length() int {
 func Run() {
 	Resolve()
 	Connect()
-	time.Sleep(30 * time.Second)
+	time.Sleep(10 * time.Second)
 	goGetHeader()
 	goGetMerkle()
 	go func() {
