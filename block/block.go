@@ -33,6 +33,8 @@ import (
 	"errors"
 	"log"
 
+	"encoding/binary"
+
 	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/db"
@@ -75,115 +77,70 @@ func init() {
 		Height: 0,
 	}
 	err = db.DB.Update(func(tx *bolt.Tx) error {
-		return addDB(genesis, nil, tx)
+		return addDB(genesis, tx)
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-//Ancestor is a pointer to ancestor refered in
-//https://ipfs.io/ipfs/QmTtqKeVpgQ73KbeoaaomvLoYMP7XKemhTgPNjasWjfh9b/
-type Ancestor struct {
-	Hash   []byte `len:"32"`
-	Offset uint64
+type blockdb struct {
+	hash   []byte
+	prev   []byte
+	height uint64
 }
 
-//List  is an "Object chain ancestor links prototype" reffed in
-//https://ipfs.io/ipfs/QmTtqKeVpgQ73KbeoaaomvLoYMP7XKemhTgPNjasWjfh9b/
-type List struct {
-	Ancestors []Ancestor `len:"prev"`
-}
-
-func saveBlock(tx *bolt.Tx, hash []byte, l *List) error {
-	dat := bytes.Buffer{}
-	if err := msg.Pack(&dat, *l); err != nil {
-		return err
-	}
-	log.Println("saved", behex.EncodeToString(hash))
-	err := db.Put(tx, "block", hash, dat.Bytes())
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	return nil
-}
-
-func loadBlock(tx *bolt.Tx, hash []byte) (*List, error) {
+func loadBlock(tx *bolt.Tx, hash []byte) (*blockdb, error) {
 	var dat []byte
 	var err error
 	if dat, err = db.Get(tx, "block", hash, nil); err != nil {
 		return nil, err
 	}
-	l := &List{}
-	err = msg.Unpack(bytes.NewBuffer(dat), l)
-	return l, err
+	height := binary.LittleEndian.Uint64(dat[:8])
+	return &blockdb{
+		hash:   hash,
+		prev:   dat[8:],
+		height: height,
+	}, nil
 }
 
-func bucketNo(n uint64) int {
-	for i := 1; i <= 64; i++ {
-		if n >>= 1; n == 0 {
-			return i
-		}
-	}
-	//never occur
-	return -1
-}
-
-func updateAncestor(prev *List, hprev []byte) {
-	ans := prev.Ancestors
-	for i := 0; i < len(ans); i++ {
-		ans[i].Offset++
-	}
-	ans = append(ans, Ancestor{
-		Hash:   hprev,
-		Offset: 1,
-	})
-	bno := 0
-	for i := 0; i < len(ans); i++ {
-		no := bucketNo(ans[i].Offset)
-		if no == bno {
-			copy(ans[i:], ans[i+1:])
-			ans = ans[:len(ans)-1]
-		}
-		bno = no
-	}
-	prev.Ancestors = ans
-}
-
-func addDB(b *Block, prev *List, tx *bolt.Tx) error {
-	if prev != nil {
-		updateAncestor(prev, b.block.Prev)
-	} else {
-		prev = &List{Ancestors: []Ancestor{}}
-	}
-	h := b.block.Hash()
-	if err := saveBlock(tx, h, prev); err != nil {
+func addDB(b *Block, tx *bolt.Tx) error {
+	hash := b.block.Hash()
+	log.Println("saved", behex.EncodeToString(hash))
+	err := b.save(tx)
+	if err != nil {
 		return err
 	}
-	if err := db.Put(tx, "tail", h, db.MustTob(b.Height)); err != nil {
+
+	if err = db.Put(tx, "tail", hash, db.MustTob(b.Height)); err != nil {
 		return err
 	}
-	if err := db.Del(tx, "tail", b.block.Prev); err != nil {
+	if err = db.Del(tx, "tail", b.block.Prev); err != nil {
 		log.Println(err)
 	}
+
 	_, last := lastblock(tx)
 	c := tx.Bucket([]byte("tail")).Cursor()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		var height uint64
-		if err := db.B2v(v, &height); err != nil {
+		if err = db.B2v(v, &height); err != nil {
 			return err
 		}
 		if height+params.Nconfirmed < last {
-			if err := c.Delete(); err != nil {
-				return err
-			}
-			if err := db.Del(tx, "block", k); err != nil {
+			if err = c.Delete(); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+
+	prev, err := goback(tx, hash, 5)
+	if err != nil {
+		return err
+	}
+	if prev != nil {
+		err = db.Put(tx, "blockheight", db.MustTob(prev.height), prev.hash)
+	}
+	return err
 }
 
 //Lastblock returns hash and height of the last block.
@@ -216,26 +173,49 @@ func lastblock(tx *bolt.Tx) ([]byte, uint64) {
 	return hash, last
 }
 
+//GetHashes get a block hash whose height is height.
+//block must be confirmed, i.e. whose hwight is more than Nconfirmed(5).
+func GetHashes(height uint64, n uint64) ([][]byte, error) {
+	hashes := make([][]byte, n)
+	errr := db.DB.View(func(tx *bolt.Tx) error {
+		var i uint64
+		for i = 0; i < n; i++ {
+			hash, err := db.Get(tx, "blockheight", db.ToKey(height+i), nil)
+			if err != nil {
+				return err
+			}
+			hashes[i] = hash
+		}
+		return nil
+	})
+	return hashes, errr
+}
+
 //Height returns height of block whose hash is hash.
 func Height(hash []byte) (uint64, error) {
-	var height uint64
-	err := db.DB.View(func(tx *bolt.Tx) error {
-		l, err := loadBlock(tx, hash)
-		if err != nil {
-			return err
-		}
-		if len(l.Ancestors) > 0 {
-			height = l.Ancestors[0].Offset
-		}
+	var bdb *blockdb
+	errr := db.DB.View(func(tx *bolt.Tx) error {
+		var err error
+		bdb, err = loadBlock(tx, hash)
 		return err
 	})
-	return height, err
+	if errr != nil {
+		return 0, errr
+	}
+	return bdb.height, nil
 }
 
 //Block is block header with height.
 type Block struct {
 	block  *msg.BlockHeader
 	Height uint64
+}
+
+func (b *Block) save(tx *bolt.Tx) error {
+	out := make([]byte, 8+32)
+	binary.LittleEndian.PutUint64(out[:8], b.Height)
+	copy(out[8:], b.block.Prev)
+	return db.Put(tx, "block", b.block.Hash(), out)
 }
 
 //Add adds blocks to the chain and returns hashes of these.
@@ -253,30 +233,26 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 				continue
 			}
 			log.Println(behex.EncodeToString(b.Prev))
-			list, err := loadBlock(tx, b.Prev)
+			previous, err := loadBlock(tx, b.Prev)
 			if err != nil {
 				log.Print(i, err)
 				err = errors.New("orphan block " + behex.EncodeToString(b.Prev))
 				return err
 			}
-			var height uint64
-			if len(list.Ancestors) > 0 {
-				height = list.Ancestors[0].Offset
-			}
-			if err = b.IsOK(height + 1); err != nil {
+			if err = b.IsOK(previous.height + 1); err != nil {
 				return err
 			}
 			block := Block{
 				block: &b,
 			}
-			block.Height = height + 1
+			block.Height = previous.height + 1
 			if c, ok := params.CheckPoints[block.Height]; ok {
 				if !bytes.Equal(c, h) {
 					err = errors.New("didn't match checkpoint hash")
 					return err
 				}
 			}
-			err = addDB(&block, list, tx)
+			err = addDB(&block, tx)
 			if err != nil {
 				return err
 			}
@@ -290,54 +266,54 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 	return hashes, nil
 }
 
-func search(tx *bolt.Tx, l *List, offset uint64) ([]byte, *List, error) {
-	for _, a := range l.Ancestors {
-		if a.Offset > offset {
-			continue
-		}
-		ll, err := loadBlock(tx, a.Hash)
+func goback(tx *bolt.Tx, hash []byte, n int) (*blockdb, error) {
+	bdb, err := loadBlock(tx, hash)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < n && bdb.height > 0; i++ {
+		bdb, err = loadBlock(tx, bdb.prev)
 		if err != nil {
-			return nil, nil, err
-		}
-		if a.Offset < offset {
-			return search(tx, ll, offset-a.Offset)
-		}
-		if a.Offset == offset {
-			return a.Hash, ll, nil
+			return nil, err
 		}
 	}
-	return nil, nil, errors.New("not found")
+	return bdb, nil
 }
 
 //LocatorHash is processed by a node in the order as they appear in the message.
-func LocatorHash() []msg.Hash {
-	var step uint64 = 1
+func LocatorHash() ([]msg.Hash, error) {
 	var indexes []msg.Hash
-	var h []byte
 	err := db.DB.View(func(tx *bolt.Tx) error {
 		index, _ := lastblock(tx)
-		l, err := loadBlock(tx, index)
+		bdb, err := loadBlock(tx, index)
 		if err != nil {
 			return err
 		}
-		indexes = append(indexes, msg.Hash{Hash: index})
-		for l.Ancestors[0].Offset > step {
-			h, l, err = search(tx, l, step)
+		indexes = append(indexes, msg.Hash{Hash: bdb.hash})
+		for i := 0; i < 10 && bdb.height > 0; i++ {
+			bdb, err = loadBlock(tx, bdb.prev)
+			if err != nil {
+				return err
+			}
+			indexes = append(indexes, msg.Hash{Hash: bdb.hash})
+		}
+		if bdb.height < 2 {
+			return nil
+		}
+		var step uint64 = 2
+		var height uint64
+		for height = bdb.height - step; height > step; height -= step {
+			h, err := db.Get(tx, "blockheight", db.ToKey(height), nil)
 			if err != nil {
 				return err
 			}
 			indexes = append(indexes, msg.Hash{Hash: h})
-			if len(indexes) >= 10 {
-				step *= 2
-			}
+			step <<= 1
 		}
 		return nil
 	})
-	if err != nil {
-		log.Fatal(err)
-	}
 	if !bytes.Equal(indexes[len(indexes)-1].Hash, params.GenesisHash) {
 		indexes = append(indexes, msg.Hash{Hash: params.GenesisHash})
 	}
-	return indexes
+	return indexes, err
 }

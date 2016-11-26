@@ -43,12 +43,8 @@ const (
 var (
 	//Tweak is a random value to add to the seed value in the hash function
 	//used by the bloom filter.
-	Tweak uint32
-)
-
-func init() {
 	Tweak = uint32(rand.Int31())
-}
+)
 
 //Bloom is for bloomfilter.
 type Bloom []byte

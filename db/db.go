@@ -44,10 +44,13 @@ import (
 /*
 bucket key value
 
-block hash [](height,ancestor hash)
+status "lastmerkle" height
+block hash (height,prev)
+blockheight height hash
 tails hash height
 key pub priv
 coin hash json(Coin)
+scripthash hash hash
 */
 
 //DB is bolt.DB for operating database.

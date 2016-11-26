@@ -35,7 +35,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/block"
+	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/params"
 )
@@ -141,7 +143,6 @@ func Run() {
 	Connect()
 	time.Sleep(10 * time.Second)
 	goGetHeader()
-	goGetMerkle()
 	go func() {
 		for range time.Tick(5 * time.Minute) {
 			Connect()
@@ -149,38 +150,13 @@ func Run() {
 	}()
 }
 
-func getheaders() msg.Getheaders {
-	h := block.LocatorHash()
+func getheaders() (msg.Getheaders, error) {
+	h, err := block.LocatorHash()
 	return msg.Getheaders{
 		Version:   params.ProtocolVersion,
 		LocHashes: h,
 		HashStop:  nil,
-	}
-}
-
-var mhash = make(chan [][]byte, 5)
-
-func goGetMerkle() {
-	go func() {
-		for hash := range mhash {
-			po := makeInv(msg.MsgFilterdBlock, hash)
-			wch <- &writeCmd{
-				cmd:  "getdata",
-				data: po,
-			}
-			log.Println("sended getdata")
-			go func(hash [][]byte) {
-				select {
-				case result := <-txAdded:
-					if result.err != nil {
-						mhash <- hash
-					}
-				case <-time.After(time.Minute):
-					mhash <- hash
-				}
-			}(hash)
-		}
-	}()
+	}, err
 }
 
 //goGetHeader is goroutine which gets header continually.
@@ -188,9 +164,14 @@ func goGetHeader() {
 	finished := 0
 	go func() {
 		for {
+			data, err := getheaders()
+			if err != nil {
+				log.Println(err)
+				return
+			}
 			wch <- &writeCmd{
 				cmd:  "getheaders",
-				data: getheaders(),
+				data: data,
 			}
 			select {
 			case result := <-blockAdded:
@@ -198,7 +179,6 @@ func goGetHeader() {
 					finished++
 				} else {
 					finished = 0
-					mhash <- result.hashes
 				}
 			case <-time.After(time.Minute):
 			}
@@ -209,10 +189,68 @@ func goGetHeader() {
 	}()
 }
 
-//Notify writes cmd to a node.
-func Notify(cmd string, p interface{}) {
-	wch <- &writeCmd{
-		cmd:  cmd,
-		data: getheaders(),
+var stop chan struct{}
+
+const size uint64 = 1000
+
+func done(height uint64) {
+	err := db.DB.Update(func(tx *bolt.Tx) error {
+		return db.Put(tx, "status", []byte("lastmerkle"), db.MustTob(height))
+	})
+	if err != nil {
+		log.Print(err)
 	}
+}
+
+func goGetMerkle() {
+	if stop == nil {
+		stop = make(chan struct{})
+	}
+	go func() {
+		var lastheight uint64
+		for lastheight = 0; ; lastheight += size {
+			hash, err := block.GetHashes(lastheight, size)
+			if err != nil {
+				log.Print(err)
+			}
+			po := makeInv(msg.MsgFilterdBlock, hash)
+			cmd := &writeCmd{
+				cmd:  "getdata",
+				data: po,
+			}
+			for failed := 0; failed < 5; failed++ {
+				wch <- cmd
+				select {
+				case <-stop:
+					return
+				case <-time.After(time.Minute):
+					continue
+				case err := <-cmd.err:
+					if err == nil {
+						done(lastheight)
+						break
+					}
+					log.Print(err)
+				}
+			}
+		}
+	}()
+}
+
+//GetMerkle (re)start to get merkle blocks from genesis.
+func GetMerkle() {
+	var lastheight uint64
+	if stop != nil {
+		stop <- struct{}{}
+		done(0)
+	} else {
+		err := db.DB.View(func(tx *bolt.Tx) error {
+			_, err := db.Get(tx, "status", []byte("lastmerkle"), &lastheight)
+			return err
+		})
+		if err != nil {
+			log.Print(err)
+		}
+	}
+	goGetMerkle()
 }

@@ -48,7 +48,7 @@ var (
 type writeCmd struct {
 	cmd  string
 	data interface{}
-	ch   chan error
+	err  chan error
 }
 
 type packet struct {
@@ -125,7 +125,7 @@ func (n *Peer) Loop() error {
 				return n.errClose(err)
 			}
 			err := n.writeMessage(w.cmd, w.data)
-			w.ch <- err
+			w.err <- err
 			if err != nil {
 				return n.errClose(err)
 			}

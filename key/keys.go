@@ -34,8 +34,49 @@ import (
 	"log"
 
 	"github.com/boltdb/bolt"
+	"github.com/monarj/wallet/bloom"
 	"github.com/monarj/wallet/db"
 )
+
+//AddScriptHash adds scripthash.
+func AddScriptHash(hash []byte) error {
+	return db.DB.Update(func(tx *bolt.Tx) error {
+		return db.Put(tx, "scripthash", hash, hash)
+	})
+}
+
+//RemoveScriptHash adds scripthash.
+func RemoveScriptHash(hash []byte) error {
+	return db.DB.Update(func(tx *bolt.Tx) error {
+		return db.Del(tx, "scripthash", hash)
+	})
+}
+
+//BloomFilter returns bloomfilter which filtered keys and scripthash.
+func BloomFilter() bloom.Bloom {
+	bf := bloom.New()
+	klist := Get()
+	for _, k := range klist {
+		_, adr := k.Address()
+		bf.Insert(k.PublicKey.Serialize())
+		bf.Insert(adr)
+	}
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("scripthash"))
+		if b == nil {
+			return nil
+		}
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			bf.Insert(k)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	return bf
+}
 
 //New creates , registers , and returns a randome key.
 func New() *PrivateKey {

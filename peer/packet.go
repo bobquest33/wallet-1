@@ -50,7 +50,6 @@ import (
 
 var (
 	blockAdded = make(chan *blockResult)
-	txAdded    = make(chan *txResult)
 )
 
 //blockResult is a result after adding blocks.
@@ -189,20 +188,9 @@ func (n *Peer) readPong(payload io.Reader, pch <-chan *packet) error {
 }
 
 func (n *Peer) writeFilterload() error {
-	bf := bloom.New()
-	klist := key.Get()
-	for _, k := range klist {
-		_, adr := k.Address()
-		bf.Insert(k.PublicKey.Serialize())
-		bf.Insert(adr)
-	}
-	aa := make([]byte, 512)
-	for i := 0; i < 512; i++ {
-		aa[i] = 0xff
-	}
+	bf := key.BloomFilter()
 	po := msg.FilterLoad{
-		//Filter:  []byte(bf),
-		Filter: aa,
+		Filter: []byte(bf),
 
 		NhashFuncs: bloom.HashFuncs,
 		NTweak:     bloom.Tweak,
@@ -302,19 +290,9 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	var err error
 	p := msg.Merkleblock{}
 	if err = msg.Unpack(payload, &p); err != nil {
-		txAdded <- &txResult{
-			err: err,
-		}
 		return err
 	}
 	hblock := p.Hash()
-	txr := &txResult{
-		hash: hblock,
-		err:  err,
-	}
-	defer func() {
-		txAdded <- txr
-	}()
 	log.Println(behex.EncodeToString(hblock))
 	txs, err := p.FilteredTx()
 	if err != nil {

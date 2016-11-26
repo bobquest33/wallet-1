@@ -80,10 +80,38 @@ func init() {
 			log.Fatal(err)
 		}
 	}
+}
 
+func del() {
+	var err error
+	errr := db.DB.Update(func(tx *bolt.Tx) error {
+		for _, h := range hash {
+			err = db.Del(tx, "block", h)
+			if err != nil {
+				log.Print(err)
+			}
+			err = db.Del(tx, "tail", h)
+			if err != nil {
+				log.Print(err)
+			}
+		}
+		var h uint64 = 1
+		for h = 1; h <= uint64(len(hash)); h++ {
+			err = db.Del(tx, "blockheight", db.ToKey(h))
+			if err != nil {
+				log.Print(err)
+			}
+		}
+		return nil
+	})
+	if errr != nil {
+		log.Fatal(err)
+	}
 }
 
 func TestBlock2(t *testing.T) {
+	del()
+
 	headers := msg.Headers{
 		Inventory: hs,
 	}
@@ -105,24 +133,6 @@ func TestBlock2(t *testing.T) {
 	if height != uint64(len(hash)) {
 		t.Fatalf("illegal tail height %d", height)
 	}
-	var l *List
-	err = db.DB.View(func(tx *bolt.Tx) error {
-		var errr error
-		l, errr = loadBlock(tx, hash[2])
-		return errr
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(l.Ancestors) != 2 {
-		t.Fatal("illegal len of ancestors", len(l.Ancestors))
-	}
-	if !bytes.Equal(l.Ancestors[0].Hash, params.GenesisHash) {
-		t.Error("illegal ancestors[0]")
-	}
-	if !bytes.Equal(l.Ancestors[1].Hash, hash[1]) {
-		t.Error("illegal ancestors[1]")
-	}
 	last, lheight := Lastblock()
 	if !bytes.Equal(last, hash[len(hash)-1]) {
 		t.Error("tail unmatched")
@@ -130,26 +140,10 @@ func TestBlock2(t *testing.T) {
 	if lheight != uint64(len(hash)) {
 		t.Error("illegal lastblock")
 	}
-
-	err = db.DB.Update(func(tx *bolt.Tx) error {
-		for _, h := range hash {
-			err = db.Del(tx, "block", h)
-			if err != nil {
-				log.Print(err)
-			}
-			err = db.Del(tx, "tail", h)
-			if err != nil {
-				log.Print(err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
 }
 
 func TestBlock1(t *testing.T) {
+	del()
 	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
 	hss := make([]msg.BlockHeader, 2)
 	hss[0] = hs[0]
@@ -162,26 +156,11 @@ func TestBlock1(t *testing.T) {
 	if err == nil {
 		t.Fatal("cannot detect orphan block")
 	}
-	err = db.DB.Update(func(tx *bolt.Tx) error {
-		for _, h := range hash {
-			err = db.Del(tx, "block", h)
-			if err != nil {
-				log.Print(err)
-			}
-			err = db.Del(tx, "tail", h)
-			if err != nil {
-				log.Print(err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
 }
 
 //need to test locatorhash more
 func TestLocator(t *testing.T) {
+	del()
 	headers := msg.Headers{
 		Inventory: hs,
 	}
@@ -191,7 +170,10 @@ func TestLocator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := LocatorHash()
+	h, err := LocatorHash()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(h) != 4 {
 		t.Fatal("illegal length of locator", len(h))
 	}
@@ -203,20 +185,5 @@ func TestLocator(t *testing.T) {
 	if !bytes.Equal(h[len(h)-1].Hash, params.GenesisHash) {
 		t.Fatal("illegal locator")
 	}
-	err = db.DB.Update(func(tx *bolt.Tx) error {
-		for _, h := range hash {
-			err = db.Del(tx, "block", h)
-			if err != nil {
-				log.Print(err)
-			}
-			err = db.Del(tx, "tail", h)
-			if err != nil {
-				log.Print(err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
+
 }
