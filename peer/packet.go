@@ -49,18 +49,8 @@ import (
 )
 
 var (
-	blockAdded = make(chan *blockResult)
+	blockAdded = make(chan error)
 )
-
-//blockResult is a result after adding blocks.
-type blockResult struct {
-	hashes [][]byte
-	err    error
-}
-type txResult struct {
-	hash []byte
-	err  error
-}
 
 //ReadMessage read a message packet from buf and returns
 //cmd and payload.
@@ -256,14 +246,11 @@ func (n *Peer) writeInv(t uint32, hash [][]byte) error {
 func (n *Peer) readHeaders(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Headers{}
 	if err := msg.Unpack(payload, &p); err != nil {
-		blockAdded <- &blockResult{err: err}
+		blockAdded <- err
 		return err
 	}
-	hashes, err := block.Add(p)
-	blockAdded <- &blockResult{
-		hashes: hashes,
-		err:    err,
-	}
+	err := block.Add(p)
+	blockAdded <- err
 	return err
 }
 
@@ -331,11 +318,7 @@ func (n *Peer) readAddr(payload io.Reader, pch <-chan *packet) error {
 		return err
 	}
 	for _, adr := range p.Addr {
-		tcpadr, err := adr.Addr.TCPAddr()
-		if err != nil {
-			log.Print(err)
-			continue
-		}
+		tcpadr := adr.Addr.TCPAddr()
 		Add(tcpadr)
 	}
 

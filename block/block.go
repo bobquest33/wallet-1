@@ -106,33 +106,15 @@ func loadBlock(tx *bolt.Tx, hash []byte) (*blockdb, error) {
 
 func addDB(b *Block, tx *bolt.Tx) error {
 	hash := b.block.Hash()
-	log.Println("saved", behex.EncodeToString(hash))
-	err := b.save(tx)
+	err := db.Put(tx, "block", hash, b.packWithPrev())
 	if err != nil {
 		return err
 	}
-
-	if err = db.Put(tx, "tail", hash, db.MustTob(b.Height)); err != nil {
+	log.Print(behex.EncodeToString(hash))
+	err = db.Put(tx, "status", []byte("lastblock"), b.packWithHash())
+	if err != nil {
 		return err
 	}
-	if err = db.Del(tx, "tail", b.block.Prev); err != nil {
-		log.Println(err)
-	}
-
-	_, last := lastblock(tx)
-	c := tx.Bucket([]byte("tail")).Cursor()
-	for k, v := c.First(); k != nil; k, v = c.Next() {
-		var height uint64
-		if err = db.B2v(v, &height); err != nil {
-			return err
-		}
-		if height+params.Nconfirmed < last {
-			if err = c.Delete(); err != nil {
-				return err
-			}
-		}
-	}
-
 	prev, err := goback(tx, hash, 5)
 	if err != nil {
 		return err
@@ -140,6 +122,7 @@ func addDB(b *Block, tx *bolt.Tx) error {
 	if prev != nil {
 		err = db.Put(tx, "blockheight", db.MustTob(prev.height), prev.hash)
 	}
+
 	return err
 }
 
@@ -156,21 +139,14 @@ func Lastblock() ([]byte, uint64) {
 	}
 	return hash, height
 }
+
 func lastblock(tx *bolt.Tx) ([]byte, uint64) {
-	var last uint64
-	var hash []byte
-	c := tx.Bucket([]byte("tail")).Cursor()
-	for k, v := c.First(); k != nil; k, v = c.Next() {
-		var height uint64
-		if err := db.B2v(v, &height); err != nil {
-			log.Fatal(err)
-		}
-		if height > last {
-			last = height
-			hash = k
-		}
+	dat, err := db.Get(tx, "status", []byte("lastblock"), nil)
+	if err != nil {
+		log.Fatal(err)
 	}
-	return hash, last
+	height := binary.LittleEndian.Uint64(dat[:8])
+	return dat[8:], height
 }
 
 //GetHashes get a block hash whose height is height.
@@ -211,17 +187,23 @@ type Block struct {
 	Height uint64
 }
 
-func (b *Block) save(tx *bolt.Tx) error {
+func (b *Block) packWithHash() []byte {
+	out := make([]byte, 8+32)
+	binary.LittleEndian.PutUint64(out[:8], b.Height)
+	copy(out[8:], b.block.Hash())
+	return out
+}
+
+func (b *Block) packWithPrev() []byte {
 	out := make([]byte, 8+32)
 	binary.LittleEndian.PutUint64(out[:8], b.Height)
 	copy(out[8:], b.block.Prev)
-	return db.Put(tx, "block", b.block.Hash(), out)
+	return out
 }
 
 //Add adds blocks to the chain and returns hashes of these.
 //We must add blocks in height order.
-func Add(mbs msg.Headers) ([][]byte, error) {
-	hashes := make([][]byte, 0, len(mbs.Inventory))
+func Add(mbs msg.Headers) error {
 	errr := db.DB.Update(func(tx *bolt.Tx) error {
 		for i, b := range mbs.Inventory {
 			h := b.Hash()
@@ -232,7 +214,6 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 			if has {
 				continue
 			}
-			log.Println(behex.EncodeToString(b.Prev))
 			previous, err := loadBlock(tx, b.Prev)
 			if err != nil {
 				log.Print(i, err)
@@ -242,28 +223,28 @@ func Add(mbs msg.Headers) ([][]byte, error) {
 			if err = b.IsOK(previous.height + 1); err != nil {
 				return err
 			}
-			block := Block{
-				block: &b,
+			block := &Block{
+				block:  &b,
+				Height: previous.height + 1,
 			}
-			block.Height = previous.height + 1
 			if c, ok := params.CheckPoints[block.Height]; ok {
 				if !bytes.Equal(c, h) {
 					err = errors.New("didn't match checkpoint hash")
 					return err
 				}
 			}
-			err = addDB(&block, tx)
+			err = addDB(block, tx)
 			if err != nil {
 				return err
 			}
-			hashes = append(hashes, h)
 		}
 		return nil
 	})
 	if errr != nil {
-		return nil, errr
+		return errr
 	}
-	return hashes, nil
+	log.Print(len(mbs.Inventory), " blocks were added")
+	return nil
 }
 
 func goback(tx *bolt.Tx, hash []byte, n int) (*blockdb, error) {
@@ -283,8 +264,8 @@ func goback(tx *bolt.Tx, hash []byte, n int) (*blockdb, error) {
 //LocatorHash is processed by a node in the order as they appear in the message.
 func LocatorHash() ([]msg.Hash, error) {
 	var indexes []msg.Hash
+	index, _ := Lastblock()
 	err := db.DB.View(func(tx *bolt.Tx) error {
-		index, _ := lastblock(tx)
 		bdb, err := loadBlock(tx, index)
 		if err != nil {
 			return err
@@ -296,19 +277,22 @@ func LocatorHash() ([]msg.Hash, error) {
 				return err
 			}
 			indexes = append(indexes, msg.Hash{Hash: bdb.hash})
+			log.Print(behex.EncodeToString(bdb.hash))
 		}
 		if bdb.height < 2 {
 			return nil
 		}
 		var step uint64 = 2
-		var height uint64
-		for height = bdb.height - step; height > step; height -= step {
+		for height := bdb.height - step; ; height -= step {
 			h, err := db.Get(tx, "blockheight", db.ToKey(height), nil)
 			if err != nil {
 				return err
 			}
 			indexes = append(indexes, msg.Hash{Hash: h})
 			step <<= 1
+			if height < step {
+				break
+			}
 		}
 		return nil
 	})

@@ -45,9 +45,9 @@ import (
 bucket key value
 
 status "lastmerkle" height
+status "lastblock" blockdb
 block hash (height,prev)
 blockheight height hash
-tails hash height
 key pub priv
 coin hash json(Coin)
 scripthash hash hash

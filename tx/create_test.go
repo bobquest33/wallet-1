@@ -29,6 +29,7 @@
 package tx
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"log"
 	"testing"
@@ -47,8 +48,9 @@ import (
 
 func setup() {
 	err := db.DB.Update(func(tx *bolt.Tx) error {
-		var height uint64 = 100
-		return db.Put(tx, "tail", make([]byte, 32), db.MustTob(height))
+		out := make([]byte, 8+32)
+		binary.LittleEndian.PutUint64(out[:8], 100)
+		return db.Put(tx, "status", []byte("lastblock"), out)
 	})
 	if err != nil {
 		log.Fatal(err)

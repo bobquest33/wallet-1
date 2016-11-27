@@ -141,7 +141,11 @@ func Add(k *PrivateKey) {
 func Get() []*PrivateKey {
 	var l []*PrivateKey
 	err := db.DB.View(func(tx *bolt.Tx) error {
-		c := tx.Bucket([]byte("key")).Cursor()
+		bu := tx.Bucket([]byte("key"))
+		if bu == nil {
+			return nil
+		}
+		c := bu.Cursor()
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			priv := NewPrivateKey(k)
 			l = append(l, priv)

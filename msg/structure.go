@@ -235,9 +235,11 @@ type NetAddr struct {
 }
 
 //TCPAddr converts net.TCPAddr struct
-func (a *NetAddr) TCPAddr() (*net.TCPAddr, error) {
-	str := fmt.Sprintf("%s:%d", net.IP(a.IPv6).String(), a.Port)
-	return net.ResolveTCPAddr("tcp", str)
+func (a *NetAddr) TCPAddr() *net.TCPAddr {
+	return &net.TCPAddr{
+		IP:   net.IP(a.IPv6),
+		Port: int(a.Port),
+	}
 }
 
 //NewNetAddr returns NetAddr struct.

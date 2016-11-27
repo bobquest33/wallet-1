@@ -129,6 +129,7 @@ func (n *Peer) Loop() error {
 			if err != nil {
 				return n.errClose(err)
 			}
+			log.Print("sended ", w.cmd)
 		case <-time.After(3 * time.Minute):
 			if n.timeout++; n.timeout > timeout {
 				return errors.New("timeout")
@@ -194,12 +195,6 @@ func (n *Peer) Handshake() error {
 		log.Println(err)
 		return err
 	}
-
-	if err = n.writeMessage("mempool", struct{}{}); err != nil {
-		log.Println(err)
-		return err
-	}
-	log.Println("sended mempool")
 
 	if err = n.writeMessage("getaddr", struct{}{}); err != nil {
 		log.Println(err)

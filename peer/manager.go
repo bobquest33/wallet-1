@@ -29,7 +29,6 @@
 package peer
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -83,10 +82,14 @@ func Resolve() {
 				return
 			}
 			for _, addr := range ns {
-				n, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", addr, params.Port))
-				if err != nil {
-					log.Println(err)
+				ip := net.ParseIP(addr)
+				if ip == nil {
+					log.Println("invalid ip address")
 					continue
+				}
+				n := &net.TCPAddr{
+					IP:   ip,
+					Port: params.Port,
 				}
 				Add(n)
 			}
@@ -102,28 +105,28 @@ func Connect() error {
 		if length() > maxNodes {
 			return nil
 		}
-		conn, err := net.DialTCP("tcp", nil, addr)
-		if err != nil {
-			log.Println(err)
-			return err
-		}
-		n := &Peer{conn: conn}
-		mutex.Lock()
-		alive[n.String()] = n
-		mutex.Unlock()
-		log.Println("connecting ", n.String())
-		go func(nn *Peer) {
+		go func(addr *net.TCPAddr) {
+			log.Printf("connecting %s", addr)
+			conn, err := net.DialTCP("tcp", nil, addr)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			n := &Peer{conn: conn}
+			mutex.Lock()
+			alive[n.String()] = n
+			mutex.Unlock()
 			defer func() {
-				Del(nn.conn.RemoteAddr())
+				Del(n.conn.RemoteAddr())
 			}()
 			if err = n.Handshake(); err != nil {
 				log.Println(err)
 				return
 			}
-			if errr := nn.Loop(); errr != nil {
+			if errr := n.Loop(); errr != nil {
 				log.Println(errr)
 			}
-		}(n)
+		}(addr)
 	}
 	if length() < maxNodes {
 		log.Println("shortage of nodes")
@@ -139,51 +142,54 @@ func length() int {
 
 //Run starts to connect nodes.
 func Run() {
+	log.Print("resolving dns")
 	Resolve()
+	log.Print("connecting")
 	Connect()
-	time.Sleep(10 * time.Second)
+	log.Print("start to get header")
 	goGetHeader()
 	go func() {
-		for range time.Tick(5 * time.Minute) {
+		for range time.Tick(15 * time.Minute) {
+			log.Print("reconnecting")
 			Connect()
 		}
 	}()
 }
 
-func getheaders() (msg.Getheaders, error) {
-	h, err := block.LocatorHash()
-	return msg.Getheaders{
-		Version:   params.ProtocolVersion,
-		LocHashes: h,
-		HashStop:  nil,
-	}, err
-}
-
 //goGetHeader is goroutine which gets header continually.
 func goGetHeader() {
-	finished := 0
 	go func() {
-		for {
-			data, err := getheaders()
+		for finished := 0; ; finished++ {
+			h, err := block.LocatorHash()
 			if err != nil {
 				log.Println(err)
 				return
 			}
-			wch <- &writeCmd{
+			data := msg.Getheaders{
+				Version:   params.ProtocolVersion,
+				LocHashes: h,
+				HashStop:  nil,
+			}
+			cmd := &writeCmd{
 				cmd:  "getheaders",
 				data: data,
+				err:  make(chan error),
+			}
+			wch <- cmd
+			if err := <-cmd.err; err != nil {
+				log.Print(<-cmd.err)
+				return
 			}
 			select {
-			case result := <-blockAdded:
-				if result.err == nil && len(result.hashes) == 0 {
-					finished++
-				} else {
+			case err := <-blockAdded:
+				if err == nil {
 					finished = 0
 				}
 			case <-time.After(time.Minute):
 			}
 			if finished > 10 {
-				time.Sleep(15 * time.Minute)
+				time.Sleep(5 * time.Minute)
+				finished = 0
 			}
 		}
 	}()
@@ -217,9 +223,14 @@ func goGetMerkle() {
 			cmd := &writeCmd{
 				cmd:  "getdata",
 				data: po,
+				err:  make(chan error),
 			}
 			for failed := 0; failed < 5; failed++ {
 				wch <- cmd
+				if err := <-cmd.err; err != nil {
+					log.Print(err)
+					continue
+				}
 				select {
 				case <-stop:
 					return
