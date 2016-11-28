@@ -98,6 +98,7 @@ func (n *Peer) Loop() error {
 		"addr":        n.readAddr,
 	}
 	pch := n.goReadMessage()
+	t := time.NewTimer(3 * time.Minute)
 	for {
 		if err := n.resetDeadline(); err != nil {
 			return n.errClose(err)
@@ -130,7 +131,7 @@ func (n *Peer) Loop() error {
 				return n.errClose(err)
 			}
 			log.Print("sended ", w.cmd)
-		case <-time.After(3 * time.Minute):
+		case <-t.C:
 			if n.timeout++; n.timeout > timeout {
 				return errors.New("timeout")
 			}
@@ -141,6 +142,10 @@ func (n *Peer) Loop() error {
 				return n.errClose(err)
 			}
 		}
+		if !t.Stop() {
+			<-t.C
+		}
+		t.Reset(3 * time.Minute)
 	}
 }
 func (n *Peer) resetDeadline() error {
@@ -194,6 +199,9 @@ func (n *Peer) Handshake() error {
 	if err = n.writeFilterload(); err != nil {
 		log.Println(err)
 		return err
+	}
+	if peersNum() > maxNodes*10 {
+		return nil
 	}
 
 	if err = n.writeMessage("getaddr", struct{}{}); err != nil {

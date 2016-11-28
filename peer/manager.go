@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/boltdb/bolt"
+	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/block"
 	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/msg"
@@ -48,7 +49,7 @@ var (
 )
 
 const (
-	maxNodes = 5
+	maxNodes = 10
 )
 
 //Add adds tcpaddr as a candidate peer.
@@ -140,56 +141,94 @@ func length() int {
 	return len(alive)
 }
 
+func peersNum() int {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	return len(peers)
+}
+
+var (
+	hashes = make(chan []byte, maxNodes*10)
+)
+
 //Run starts to connect nodes.
 func Run() {
 	log.Print("resolving dns")
 	Resolve()
 	log.Print("connecting")
 	Connect()
-	log.Print("start to get header")
-	goGetHeader()
 	go func() {
 		for range time.Tick(15 * time.Minute) {
 			log.Print("reconnecting")
 			Connect()
 		}
 	}()
+	log.Print("start to get header")
+	goGetHeader()
+}
+
+func isFinished(bs []*block.Block) bool {
+	if len(bs) != 1 {
+		return false
+	}
+	last := true
+	for _, n := range alive {
+		if uint64(n.LastBlock) != bs[0].Height {
+			last = false
+			break
+		}
+	}
+	return last
 }
 
 //goGetHeader is goroutine which gets header continually.
 func goGetHeader() {
+	waittime := 10 * time.Second
 	go func() {
-		for finished := 0; ; finished++ {
-			h, err := block.LocatorHash()
-			if err != nil {
-				log.Println(err)
-				return
+		for {
+			bs := block.Lastblocks()
+			if isFinished(bs) {
+				waittime = 5 * time.Minute
 			}
-			data := msg.Getheaders{
-				Version:   params.ProtocolVersion,
-				LocHashes: h,
-				HashStop:  nil,
+			for _, b := range bs {
+				hashes <- b.Hash
 			}
-			cmd := &writeCmd{
-				cmd:  "getheaders",
-				data: data,
-				err:  make(chan error),
-			}
-			wch <- cmd
-			if err := <-cmd.err; err != nil {
-				log.Print(<-cmd.err)
-				return
-			}
-			select {
-			case err := <-blockAdded:
-				if err == nil {
-					finished = 0
+			t := time.NewTimer(waittime)
+		loop:
+			for {
+				select {
+				case hash := <-hashes:
+					log.Print("getting headers from ", behex.EncodeToString(hash))
+					h, err := block.LocatorHash(hash)
+					if err != nil {
+						log.Println(err)
+						return
+					}
+					data := msg.Getheaders{
+						Version:   params.ProtocolVersion,
+						LocHashes: h,
+						HashStop:  nil,
+					}
+					cmd := &writeCmd{
+						cmd:  "getheaders",
+						data: data,
+						err:  make(chan error),
+					}
+					go func() {
+						wch <- cmd
+						if err := <-cmd.err; err != nil {
+							hashes <- hash
+							log.Print(err)
+							return
+						}
+					}()
+				case <-t.C:
+					break loop
 				}
-			case <-time.After(time.Minute):
-			}
-			if finished > 10 {
-				time.Sleep(5 * time.Minute)
-				finished = 0
+				if !t.Stop() {
+					<-t.C
+				}
+				t.Reset(waittime)
 			}
 		}
 	}()

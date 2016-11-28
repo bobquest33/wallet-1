@@ -48,10 +48,6 @@ import (
 	"github.com/monarj/wallet/tx"
 )
 
-var (
-	blockAdded = make(chan error)
-)
-
 //ReadMessage read a message packet from buf and returns
 //cmd and payload.
 func (n *Peer) readMessage() (string, *bytes.Buffer, error) {
@@ -246,11 +242,12 @@ func (n *Peer) writeInv(t uint32, hash [][]byte) error {
 func (n *Peer) readHeaders(payload io.Reader, pch <-chan *packet) error {
 	p := msg.Headers{}
 	if err := msg.Unpack(payload, &p); err != nil {
-		blockAdded <- err
 		return err
 	}
-	err := block.Add(p)
-	blockAdded <- err
+	finished, err := block.Add(p)
+	if !finished && len(p.Inventory) > 0 {
+		hashes <- p.Inventory[len(p.Inventory)-1].Hash()
+	}
 	return err
 }
 
@@ -288,8 +285,8 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	if len(txs) == 0 {
 		return nil
 	}
-	_, height := block.Lastblock()
-	if height < 0 {
+	b := block.Lastblock()
+	if b.Height < 0 {
 		err = errors.New("no merkle hash in the chain." + behex.EncodeToString(p.Hash()))
 		return err
 	}
@@ -304,7 +301,7 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 			err = errors.New("cannot recieve tx packets")
 			return err
 		}
-		if err = n.readTx(p.payload, txs, height); err != nil {
+		if err = n.readTx(p.payload, txs, b.Height); err != nil {
 			return err
 		}
 	}

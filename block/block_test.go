@@ -84,20 +84,6 @@ func init() {
 
 func del() {
 	var err error
-	g := msg.BlockHeader{
-		HBlockHeader: msg.HBlockHeader{
-			Version:   params.GenesisVersion,
-			Merkle:    params.GenesisMerkle,
-			Timestamp: params.GenesisTime,
-			Bits:      params.GenesisBits,
-			Nonce:     params.GenesisNonce,
-		},
-		TxnCount: 0,
-	}
-	genesis := &Block{
-		block:  &g,
-		Height: 0,
-	}
 	errr := db.DB.Update(func(tx *bolt.Tx) error {
 		for _, h := range hash {
 			err = db.Del(tx, "block", h)
@@ -111,10 +97,6 @@ func del() {
 			if err != nil {
 				log.Print(err)
 			}
-		}
-		err = addDB(genesis, tx)
-		if err != nil {
-			log.Print(err)
 		}
 		return nil
 	})
@@ -131,9 +113,12 @@ func TestBlock2(t *testing.T) {
 	}
 	var err error
 
-	err = Add(headers)
+	finished, err := Add(headers)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if finished {
+		t.Error("unexpcected finished")
 	}
 
 	height, err := Height(hash[len(hash)-1])
@@ -143,11 +128,11 @@ func TestBlock2(t *testing.T) {
 	if height != uint64(len(hash)) {
 		t.Fatalf("illegal tail height %d", height)
 	}
-	last, lheight := Lastblock()
-	if !bytes.Equal(last, hash[len(hash)-1]) {
-		t.Error("tail unmatched", behex.EncodeToString(last))
+	lb := Lastblock()
+	if !bytes.Equal(lb.Hash, params.GenesisHash) {
+		t.Error("tail unmatched", behex.EncodeToString(lb.Hash))
 	}
-	if lheight != uint64(len(hash)) {
+	if lb.Height != 0 {
 		t.Error("illegal lastblock")
 	}
 }
@@ -161,7 +146,7 @@ func TestBlock1(t *testing.T) {
 	headers := msg.Headers{
 		Inventory: hss,
 	}
-	err := Add(headers)
+	_, err := Add(headers)
 	log.Println(err)
 	if err == nil {
 		t.Fatal("cannot detect orphan block")
@@ -176,11 +161,11 @@ func TestLocator(t *testing.T) {
 	}
 	var err error
 
-	err = Add(headers)
+	_, err = Add(headers)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := LocatorHash()
+	h, err := LocatorHash(hash[len(hash)-1])
 	if err != nil {
 		t.Fatal(err)
 	}

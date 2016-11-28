@@ -45,7 +45,7 @@ import (
 bucket key value
 
 status "lastmerkle" height
-status "lastblock" blockdb
+lastblock height hash
 block hash (height,prev)
 blockheight height hash
 key pub priv
@@ -158,14 +158,14 @@ func Put(tx *bolt.Tx, bucket string, key []byte, value interface{}) error {
 }
 
 //HasKey returns true if db has key.
-func HasKey(tx *bolt.Tx, bucket string, key []byte) (bool, error) {
+func HasKey(tx *bolt.Tx, bucket string, key []byte) bool {
 	var v []byte
 	b := tx.Bucket([]byte(bucket))
 	if b == nil {
-		return false, errors.New("bucket not found " + bucket)
+		return false
 	}
 	v = b.Get(key)
-	return v != nil, nil
+	return v != nil
 }
 
 //Count counts #data whose key has prefix.

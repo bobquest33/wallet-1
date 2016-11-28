@@ -30,13 +30,34 @@ package main
 
 import (
 	"log"
+	"os"
+	"runtime/pprof"
 	"time"
 
+	"github.com/monarj/wallet/block"
 	"github.com/monarj/wallet/peer"
 )
 
 func main() {
+	cpuprofile := "mycpu.prof"
+	f, err := os.Create(cpuprofile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+	f2, err := os.Create("mem.prof")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer pprof.WriteHeapProfile(f2)
+
 	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
 	peer.Run()
-	time.Sleep(5 * time.Minute)
+	time.Sleep(time.Minute)
+	h := block.Lastblocks()
+	for _, hh := range h {
+		log.Print(hh.Height)
+	}
+	log.Print(block.DownloadedBlockNumber())
 }

@@ -56,20 +56,12 @@ const (
 var (
 	//PacketMagic is  the header bytes that identify the start of a packet on this network
 	PacketMagic = []byte{0xfb, 0xc0, 0xb6, 0xdb}
-	//GenesisVersion is the version of genesis blocks.
-	GenesisVersion uint32 = 1
-	//GenesisTime is the time of genesis blocks.
-	GenesisTime uint32 = 1388479472
-	//GenesisBits is the nBits of genesis blocks.
-	GenesisBits uint32 = 0x1e0ffff0
-	//GenesisNonce is the nonce of genesis blocks.
-	GenesisNonce = []byte{0x66, 0xd6, 0x12, 0x00}
-	//GenesisMerkle is the merkle root of genesis blocks.
-	GenesisMerkle []byte
 	//GenesisHash is the hash of genesis blocks.
 	GenesisHash []byte
 	//CheckPoints are points hash should be checked.
 	CheckPoints = make(map[uint64][]byte)
+	//Prevs is previous block hash of CheckPoints.
+	Prevs = make(map[uint64][]byte)
 	//DNSSeeds is the list of dns for node seeds.
 	DNSSeeds = []string{
 		"dnsseed.monacoin.org",
@@ -80,11 +72,7 @@ var (
 
 func init() {
 	var err error
-	merkleGenesis :=
-		"35e405a8a46f4dbc1941727aaf338939323c3b955232d0317f8731fe07ac4ba6"
-	if GenesisMerkle, err = behex.DecodeString(merkleGenesis); err != nil {
-		log.Fatal(err)
-	}
+
 	hashGenesis :=
 		"ff9f1c0116d19de7c9963845e129f9ed1bfc0b376eb54fd7afa42e0d418c8bb6"
 	if GenesisHash, err = behex.DecodeString(hashGenesis); err != nil {
@@ -111,5 +99,27 @@ func init() {
 			log.Fatal(err)
 		}
 		CheckPoints[k] = h
+	}
+	prevs := map[uint64]string{
+		0:      "0000000000000000000000000000000000000000000000000000000000000000",
+		1500:   "9bfb0a32684c8e68839e08d59f2fbecc69586368540a2e1439e765d56072ff89",
+		4000:   "82f94da36aa810abda67263b5c97bc821297dd17432ee3d81bccc0fe42ba0078",
+		8000:   "cccfeff9a400a9dbd3b4d1ab181bc208cf08795558d2931483972e01b75cba47",
+		16000:  "893efdeb009face8546e473469feba2950aa767de73b601e4572217083d99cd5",
+		32000:  "a40c6ff7810f795c8c23f41fbe2a870278b3a4e7f68d66a46d21b06a678c9b51",
+		58700:  "6fd4812b5c71362a7702182902deb7dd647ccbf1b1af924dcb797fc23d7a14d5",
+		80000:  "d458aef846dd58f9a22d60ae7a98d3cdf2e25ed6863ef05d529102fc435e164f",
+		115000: "4568160e0d97abc3cbc89f87fd5015a681fb5438de05dde791c9041847b8f960",
+		189250: "0b660afcef545fa4fdfecd02e8694b8d319839f908e1dd9e3388232a05ef7e50",
+		300000: "f9565504df0fd38529eb4d048e5ba2ce398b087dc202b315859677619a60543a",
+		444000: "d165120dbb2a3ada178a7c40961e3ddef94646127335b996d589d3573f870bdd",
+		655000: "fb72709f01a5a23fd998c71a1a2266dea3390e9ca59e18bacd80fe4626bdb7be",
+	}
+	for k, v := range prevs {
+		h, err := behex.DecodeString(v)
+		if err != nil {
+			log.Fatal(err)
+		}
+		Prevs[k] = h
 	}
 }

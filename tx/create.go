@@ -40,8 +40,8 @@ import (
 
 	"encoding/hex"
 
-	"github.com/StorjPlatform/gocoin/btcec"
 	"github.com/monarj/wallet/block"
+	"github.com/monarj/wallet/btcec"
 	"github.com/monarj/wallet/key"
 	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/params"
@@ -89,12 +89,12 @@ func newTxins(total uint64) ([]msg.TxIn, []*key.PrivateKey, *msg.TxOut, error) {
 	var privs []*key.PrivateKey
 	for i := 0; i < len(coins) && amount < total; i++ {
 		c := coins[i]
-		_, height := block.Lastblock()
-		if c.Coinbase && height-c.Height < params.SpendableCoinbaseDepth {
+		b := block.Lastblock()
+		if c.Coinbase && b.Height-c.Height < params.SpendableCoinbaseDepth {
 			log.Println("unspendable coinbase because of height")
 			continue
 		}
-		if height-c.Height < params.Nconfirmed {
+		if b.Height-c.Height < params.Nconfirmed {
 			log.Println("unspendable because of height")
 			continue
 		}
