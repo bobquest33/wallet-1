@@ -120,20 +120,7 @@ func TestStruct(t *testing.T) {
 		}
 	}
 
-	g := BlockHeader{
-		HBlockHeader: HBlockHeader{
-			Version:   params.GenesisVersion,
-			Merkle:    params.GenesisMerkle,
-			Timestamp: params.GenesisTime,
-			Bits:      params.GenesisBits,
-			Nonce:     params.GenesisNonce,
-		},
-		TxnCount: 0,
-	}
-	hg := g.Hash()
-	if !bytes.Equal(hg, params.GenesisHash) {
-		t.Fatal("illegal hash of genesis block.", behex.EncodeToString(hg))
-	}
+	g := BlockHeader{}
 	g.Bits = 0x181bc330
 	target := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

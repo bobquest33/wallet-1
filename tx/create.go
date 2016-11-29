@@ -89,13 +89,17 @@ func newTxins(total uint64) ([]msg.TxIn, []*key.PrivateKey, *msg.TxOut, error) {
 	var privs []*key.PrivateKey
 	for i := 0; i < len(coins) && amount < total; i++ {
 		c := coins[i]
-		b := block.Lastblock()
-		if c.Coinbase && b.Height-c.Height < params.SpendableCoinbaseDepth {
-			log.Println("unspendable coinbase because of height")
+		last := block.Lastblock()
+		current, err := block.LoadBlock(c.Block)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if !block.Confirmed(current) {
+			log.Println("unspendable because of height")
 			continue
 		}
-		if b.Height-c.Height < params.Nconfirmed {
-			log.Println("unspendable because of height")
+		if c.Coinbase && last.Height-current.Height < params.SpendableCoinbaseDepth {
+			log.Println("unspendable coinbase because of height")
 			continue
 		}
 		txins = append(txins, msg.TxIn{

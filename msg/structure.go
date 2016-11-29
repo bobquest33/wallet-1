@@ -315,7 +315,7 @@ func (n *node) hash(m *merkle) (Hash, error) {
 	return Hash{Hash: sum[:]}, nil
 }
 
-//FilteredTx checks merkleblock and returns filtered txs.
+//FilteredTx checks merkleblock and extracts filtered txs.
 func (m *Merkleblock) FilteredTx() ([]Hash, error) {
 	nodes := make([]*node, 0, m.Total)
 	for i := 0; i < int(m.Total); i++ {

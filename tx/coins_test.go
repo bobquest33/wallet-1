@@ -114,16 +114,16 @@ func TestTx1(t *testing.T) {
 		// MQesEqAZNxeNNHS2XDNy23ozchyt1PXX2G -> 50mona
 		"010000000188fa5c97be66845170db81a582888c55b24ca78943314f0a2d63c0b252854b4b000000006b483045022100a2e4bdc593bacb5918ac06dd6a718087c202dd7b8a8f5b62a243320c79c0629c022018e857dcdaa1afada0ebdf9b3f1086a95a70852d64fafd9d5233815392e5f81801210341573692e18d367df964ba1effc151c5952a6128a0f973cb5006b0151d32e517ffffffff04e2d10e06000000001976a914872455664fee9e4e9b5985f7ff09a3dfbd73bae688acaff98441000000001976a91431f10038a4debd33ca2d1c675575dc419b4b5fa288ac3a6eff6b000000001976a9146c1d53b7b5c18f34ad012c15439e4a0deb7c6b7988ac35b87276000000001976a914da2f111a4e3e2e88947577ae06b8e31958c887e788ac00000000",
 	}
-	coins, err := getCoins(nil)
+	coins, err := GetCoins(nil)
 	if len(coins) != 0 {
 		t.Fatal(len(coins))
 	}
 	a := addpubkey(addr)
 	txs := maketx(stx)
-	if err = Add(txs[0], 0); err != nil {
+	if err = Add(txs[0], make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
-	coins, err = getCoins(a)
+	coins, err = GetCoins(a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,10 +134,10 @@ func TestTx1(t *testing.T) {
 		t.Fatal("value differes", coins[0].Value)
 	}
 	log.Println("adding tx")
-	if err = Add(txs[1], 0); err != nil {
+	if err = Add(txs[1], make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
-	coins, err = getCoins(a)
+	coins, err = GetCoins(a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,10 +161,10 @@ func TestTx2(t *testing.T) {
 	a := addpubkey(addr)
 	txs := maketx(stx)
 	log.Println(behex.EncodeToString(txs[0].Hash()))
-	if err := Add(txs[0], 0); err != nil {
+	if err := Add(txs[0], make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
-	coins, err := getCoins(a)
+	coins, err := GetCoins(a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,10 +175,10 @@ func TestTx2(t *testing.T) {
 		t.Fatal("value differes", coins[0].Value)
 	}
 	log.Println(behex.EncodeToString(txs[1].Hash()))
-	if err := Add(txs[1], 0); err != nil {
+	if err := Add(txs[1], make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
-	coins, err = getCoins(a)
+	coins, err = GetCoins(a)
 	if err != nil {
 		t.Fatal(err)
 	}

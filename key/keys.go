@@ -40,14 +40,12 @@ import (
 
 //AddScriptHash adds scripthash.
 func AddScriptHash(hash []byte) error {
-	return db.DB.Update(func(tx *bolt.Tx) error {
-		return db.Put(tx, "scripthash", hash, hash)
-	})
+	return db.Batch("scripthash", hash, hash)
 }
 
 //RemoveScriptHash adds scripthash.
 func RemoveScriptHash(hash []byte) error {
-	return db.DB.Update(func(tx *bolt.Tx) error {
+	return db.DB.Batch(func(tx *bolt.Tx) error {
 		return db.Del(tx, "scripthash", hash)
 	})
 }
@@ -129,9 +127,7 @@ func FromPubHash(pubhash []byte) (*PublicKey, error) {
 
 //Add adds key to key list.
 func Add(k *PrivateKey) {
-	err := db.DB.Update(func(tx *bolt.Tx) error {
-		return db.Put(tx, "key", k.PublicKey.Serialize(), k.Serialize())
-	})
+	err := db.Batch("key", k.PublicKey.Serialize(), k.Serialize())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -160,7 +156,7 @@ func Get() []*PrivateKey {
 
 //Remove removes the key from key list.
 func Remove(k *PrivateKey) error {
-	return db.DB.Update(func(tx *bolt.Tx) error {
+	return db.DB.Batch(func(tx *bolt.Tx) error {
 		return db.Del(tx, "key", k.PublicKey.Serialize())
 	})
 }

@@ -60,51 +60,53 @@ func AddNotify(pubscr []byte) chan *msg.Tx {
 //Coins is array of coins.
 type Coins []*Coin
 
-//Len returns len of coins.
-func (c Coins) Len() int {
-	return len(c)
+func (c Coins) Len() int           { return len(c) }
+func (c Coins) Less(i, j int) bool { return c[i].Value < c[j].Value }
+func (c Coins) Swap(i, j int)      { c[i], c[j] = c[j], c[i] }
+
+//GetCoins get coin list.
+func GetCoins(pub *key.PublicKey) (Coins, error) {
+	var coins Coins
+	err := db.DB.Batch(func(tx *bolt.Tx) error {
+		var errr error
+		coins, errr = getCoins(tx, pub)
+		return errr
+	})
+	return coins, err
 }
 
-//Less returns true if coins[i]<coins[j]
-func (c Coins) Less(i, j int) bool {
-	return c[i].Value < c[j].Value
-}
-
-//Swap swaps c[i] and c[j]
-func (c Coins) Swap(i, j int) {
-	c[i], c[j] = c[j], c[i]
-}
-
-func getCoins(pub *key.PublicKey) (Coins, error) {
+func getCoins(tx *bolt.Tx, pub *key.PublicKey) (Coins, error) {
 	var coins Coins
 	var spub []byte
 	if pub != nil {
 		spub = pub.Serialize()
 	}
-	err := db.DB.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte("coin"))
-		if bucket == nil {
-			return nil
+	bucket := tx.Bucket([]byte("coin"))
+	if bucket == nil {
+		return nil, nil
+	}
+	c := bucket.Cursor()
+	for k, v := c.First(); k != nil; k, v = c.Next() {
+		l := &Coin{}
+		errr := msg.Unpack(bytes.NewBuffer(v), l)
+		if errr != nil {
+			return nil, errr
 		}
-		c := bucket.Cursor()
-		for k, v := c.First(); k != nil; k, v = c.Next() {
-			l := &Coin{}
-			errr := msg.Unpack(bytes.NewBuffer(v), l)
-			if errr != nil {
-				return errr
-			}
-			if spub == nil || bytes.Equal(l.Pubkey, spub) {
-				coins = append(coins, l)
-			}
+		if spub == nil || bytes.Equal(l.Pubkey, spub) {
+			coins = append(coins, l)
 		}
-		return nil
-	})
-	return coins, err
+	}
+	return coins, nil
 }
 
 //SortedCoins returns value-sorted coins that cointans all address.
 func SortedCoins() Coins {
-	coins, err := getCoins(nil)
+	var coins Coins
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		var errr error
+		coins, errr = getCoins(tx, nil)
+		return errr
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -113,14 +115,26 @@ func SortedCoins() Coins {
 }
 
 func saveCoin(l *Coin) error {
+	spent := false
+	err := db.DB.Batch(func(tx *bolt.Tx) error {
+		if db.HasKey(tx, "spend", l.TxHash) {
+			spent = true
+			return db.Del(tx, "spend", l.TxHash)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if spent {
+		return nil
+	}
 	dat := bytes.Buffer{}
 	if err := msg.Pack(&dat, *l); err != nil {
 		return err
 	}
-	return db.DB.Update(func(tx *bolt.Tx) error {
-		k := db.ToKey(l.TxHash, l.TxIndex)
-		return db.Put(tx, "coin", k, dat.Bytes())
-	})
+	k := db.ToKey(l.TxHash, l.TxIndex)
+	return db.Batch("coin", k, dat.Bytes())
 }
 
 //Coin represents an available transaction.
@@ -129,35 +143,19 @@ type Coin struct {
 	TxHash   []byte `len:"32"`
 	Value    uint64
 	Ttype    byte
-	Height   uint64
+	Block    []byte `len:"32"`
 	Script   []byte `len:"prev"`
 	TxIndex  uint32
 	Coinbase bool
 }
 
-func add(pub *key.PublicKey, tx *msg.Tx, index uint32,
-	ttype byte, height uint64, coinbase bool, script []byte) error {
-	a := pub.Serialize()
-	c := &Coin{
-		Pubkey:   a,
-		TxHash:   tx.Hash(),
-		TxIndex:  index,
-		Value:    tx.TxOut[index].Value,
-		Ttype:    ttype,
-		Height:   height,
-		Coinbase: coinbase,
-		Script:   script,
-	}
-	return saveCoin(c)
-}
-
 //RemoveKey removes coins associated with pub.
 func RemoveKey(pub *key.PublicKey) error {
-	coin, err := getCoins(pub)
-	if err != nil {
-		return err
-	}
-	err = db.DB.Update(func(tx *bolt.Tx) error {
+	return db.DB.Batch(func(tx *bolt.Tx) error {
+		coin, err := getCoins(tx, pub)
+		if err != nil {
+			return err
+		}
 		for _, c := range coin {
 			if errr := db.Del(tx, "coin", db.ToKey(c.TxHash, c.TxIndex)); err != nil {
 				return errr
@@ -165,23 +163,21 @@ func RemoveKey(pub *key.PublicKey) error {
 		}
 		return nil
 	})
-	return err
 }
 
 //remove removes one tx.
 func remove(hash []byte, index uint32) error {
-	coin, err := getCoins(nil)
-	if err != nil {
-		return err
-	}
-	return db.DB.Update(func(tx *bolt.Tx) error {
+	return db.DB.Batch(func(tx *bolt.Tx) error {
+		coin, err := getCoins(tx, nil)
+		if err != nil {
+			return err
+		}
 		for _, c := range coin {
 			if bytes.Equal(c.TxHash, hash) && c.TxIndex == index {
-				log.Println("rm")
 				return db.Del(tx, "coin", db.ToKey(c.TxHash, c.TxIndex))
 			}
 		}
-		return errors.New("not found")
+		return db.Put(tx, "spent", db.ToKey(hash, index), hash)
 	})
 }
 
@@ -265,7 +261,7 @@ func parseScriptsigT(buf *bytes.Buffer, data []byte) (*ScriptSigT, error) {
 }
 
 //Add adds or removes transanctions from a tx packet.
-func Add(mtx *msg.Tx, height uint64) error {
+func Add(mtx *msg.Tx, hash []byte) error {
 	coinbase := false
 	zero := make([]byte, 32)
 	for _, in := range mtx.TxIn {
@@ -325,7 +321,17 @@ func Add(mtx *msg.Tx, height uint64) error {
 			log.Println(err, behex.EncodeToString(mtx.Hash()))
 			continue
 		}
-		if err = add(pubkey, mtx, uint32(i), ttype, height, coinbase, in.Script); err != nil {
+		c := &Coin{
+			Pubkey:   pubkey.Serialize(),
+			TxHash:   mtx.Hash(),
+			TxIndex:  uint32(i),
+			Value:    mtx.TxOut[i].Value,
+			Ttype:    ttype,
+			Block:    hash,
+			Coinbase: coinbase,
+			Script:   in.Script,
+		}
+		if err = saveCoin(c); err != nil {
 			return err
 		}
 	}

@@ -50,6 +50,7 @@ block hash (height,prev)
 blockheight height hash
 key pub priv
 coin hash json(Coin)
+spend <hash index>,hash
 scripthash hash hash
 */
 
@@ -306,4 +307,11 @@ func GetPrefixs(tx *bolt.Tx, bucket string) ([]string, error) {
 		return nil
 	})
 	return cnt, err
+}
+
+//Batch puts sets one key/value pair by Batch.
+func Batch(bucket string, key []byte, value interface{}) error {
+	return DB.Batch(func(tx *bolt.Tx) error {
+		return Put(tx, bucket, key, value)
+	})
 }

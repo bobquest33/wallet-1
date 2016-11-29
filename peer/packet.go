@@ -48,6 +48,8 @@ import (
 	"github.com/monarj/wallet/tx"
 )
 
+var gotMerkle = make(chan []byte)
+
 //ReadMessage read a message packet from buf and returns
 //cmd and payload.
 func (n *Peer) readMessage() (string, *bytes.Buffer, error) {
@@ -205,18 +207,29 @@ func (n *Peer) readInv(payload io.Reader, pch <-chan *packet) error {
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
 	}
+	hashes := make([][]byte, 0, len(p.Inventory))
 	for _, inv := range p.Inventory {
-		log.Printf("msgtx %s", behex.EncodeToString(inv.Hash))
+		log.Printf("readinv %d %s", inv.Type, behex.EncodeToString(inv.Hash))
 		switch inv.Type {
 		case msg.MsgTX:
 			//ignore because we cannot check the validity
 		case msg.MsgBlock:
-		//TODO
+			hashes = append(hashes, inv.Hash)
 		case msg.MsgFilterdBlock:
 		//can do nothing because of SPV.
 		default:
 			return fmt.Errorf("unknown inv type %d", inv.Type)
 		}
+	}
+	po := makeInv(msg.MsgFilterdBlock, hashes)
+	cmd := &writeCmd{
+		cmd:  "getdata",
+		data: po,
+		err:  make(chan error),
+	}
+	wch <- cmd
+	if err := cmd.err; err != nil {
+		log.Print(err)
 	}
 	return nil
 }
@@ -251,7 +264,7 @@ func (n *Peer) readHeaders(payload io.Reader, pch <-chan *packet) error {
 	return err
 }
 
-func (n *Peer) readTx(payload io.Reader, txs []msg.Hash, height uint64) error {
+func (n *Peer) readTx(payload io.Reader, txs []msg.Hash, hash []byte) error {
 	p := msg.Tx{}
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
@@ -266,7 +279,7 @@ func (n *Peer) readTx(payload io.Reader, txs []msg.Hash, height uint64) error {
 	if !ok {
 		return errors.New("no hash in txs")
 	}
-	err := tx.Add(&p, height)
+	err := tx.Add(&p, hash)
 	return err
 }
 
@@ -278,34 +291,34 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	}
 	hblock := p.Hash()
 	log.Println(behex.EncodeToString(hblock))
-	txs, err := p.FilteredTx()
-	if err != nil {
+	if _, err := block.AddMerkle(&p); err != nil {
+		txhashes <- [][]byte{hblock}
 		return err
 	}
-	if len(txs) == 0 {
-		return nil
-	}
-	b := block.Lastblock()
-	if b.Height < 0 {
-		err = errors.New("no merkle hash in the chain." + behex.EncodeToString(p.Hash()))
+	txs, err := p.FilteredTx()
+	if err != nil {
+		txhashes <- [][]byte{hblock}
 		return err
 	}
 	log.Println(len(txs), len(p.Hashes))
 	for i := 0; i < len(txs); i++ {
 		p := <-pch
 		if p.err != nil {
-			err = p.err
-			return err
+			txhashes <- [][]byte{hblock}
+			return p.err
 		}
 		if p.cmd != "tx" {
 			err = errors.New("cannot recieve tx packets")
+			txhashes <- [][]byte{hblock}
 			return err
 		}
-		if err = n.readTx(p.payload, txs, b.Height); err != nil {
+		if err = n.readTx(p.payload, txs, hblock); err != nil {
+			txhashes <- [][]byte{hblock}
 			return err
 		}
 	}
 	log.Println("read merkle")
+	gotMerkle <- hblock
 	return nil
 }
 

@@ -121,12 +121,12 @@ func TestBlock2(t *testing.T) {
 		t.Error("unexpcected finished")
 	}
 
-	height, err := Height(hash[len(hash)-1])
+	b, err := LoadBlock(hash[len(hash)-1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if height != uint64(len(hash)) {
-		t.Fatalf("illegal tail height %d", height)
+	if b.Height != uint64(len(hash)) {
+		t.Fatalf("illegal tail height %d", b.Height)
 	}
 	lb := Lastblock()
 	if !bytes.Equal(lb.Hash, params.GenesisHash) {

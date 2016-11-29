@@ -34,6 +34,8 @@ import (
 	"sync"
 	"time"
 
+	"sort"
+
 	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/block"
@@ -165,6 +167,9 @@ func Run() {
 	}()
 	log.Print("start to get header")
 	goGetHeader()
+	log.Print("start to get txs")
+	gosaveMerkleInfo()
+	getMerkle()
 }
 
 func isFinished(bs []*block.Block) bool {
@@ -188,6 +193,7 @@ func goGetHeader() {
 		for {
 			bs := block.Lastblocks()
 			if isFinished(bs) {
+				log.Print("finished syncing header.")
 				waittime = 5 * time.Minute
 			}
 			for _, b := range bs {
@@ -234,73 +240,99 @@ func goGetHeader() {
 	}()
 }
 
-var stop chan struct{}
+var (
+	txhashes = make(chan [][]byte)
+)
 
-const size uint64 = 1000
+const size uint64 = 500
 
-func done(height uint64) {
-	err := db.DB.Update(func(tx *bolt.Tx) error {
-		return db.Put(tx, "status", []byte("lastmerkle"), db.MustTob(height))
-	})
-	if err != nil {
-		log.Print(err)
-	}
-}
-
-func goGetMerkle() {
-	if stop == nil {
-		stop = make(chan struct{})
-	}
+func getMerkle() {
+	goGetMerkle()
 	go func() {
-		var lastheight uint64
-		for lastheight = 0; ; lastheight += size {
-			hash, err := block.GetHashes(lastheight, size)
+		for {
+			var lastheight uint64
+			err := db.DB.View(func(tx *bolt.Tx) error {
+				_, err := db.Get(tx, "status", []byte("lastmerkle"), &lastheight)
+				return err
+			})
 			if err != nil {
 				log.Print(err)
 			}
-			po := makeInv(msg.MsgFilterdBlock, hash)
-			cmd := &writeCmd{
-				cmd:  "getdata",
-				data: po,
-				err:  make(chan error),
-			}
-			for failed := 0; failed < 5; failed++ {
-				wch <- cmd
-				if err := <-cmd.err; err != nil {
-					log.Print(err)
-					continue
+			for height := lastheight; ; height++ {
+				hs, err := block.GetHashes(height, size)
+				if err != nil || len(hs) == 0 {
+					log.Print(err, len(hs))
+					time.Sleep(15 * time.Minute)
+					break
 				}
-				select {
-				case <-stop:
-					return
-				case <-time.After(time.Minute):
-					continue
-				case err := <-cmd.err:
-					if err == nil {
-						done(lastheight)
-						break
-					}
-					log.Print(err)
-				}
+				txhashes <- hs
 			}
 		}
 	}()
 }
 
-//GetMerkle (re)start to get merkle blocks from genesis.
-func GetMerkle() {
-	var lastheight uint64
-	if stop != nil {
-		stop <- struct{}{}
-		done(0)
-	} else {
-		err := db.DB.View(func(tx *bolt.Tx) error {
-			_, err := db.Get(tx, "status", []byte("lastmerkle"), &lastheight)
-			return err
-		})
-		if err != nil {
-			log.Print(err)
+func goGetMerkle() {
+	go func() {
+		for hashes := range txhashes {
+			log.Print("getting txs from ", behex.EncodeToString(hashes[0]))
+			po := makeInv(msg.MsgFilterdBlock, hashes)
+			cmd := &writeCmd{
+				cmd:  "getdata",
+				data: po,
+				err:  make(chan error),
+			}
+			go func(hashes [][]byte) {
+				wch <- cmd
+				if err := <-cmd.err; err != nil {
+					txhashes <- hashes
+					log.Print(err)
+					return
+				}
+			}(hashes)
 		}
+	}()
+}
+
+func gosaveMerkleInfo() {
+	go func() {
+		for {
+			t := time.NewTimer(time.Minute)
+			var finished block.UInt64Slice
+			select {
+			case h := <-gotMerkle:
+				b, err := block.LoadBlock(h)
+				if err != nil {
+					log.Print(err)
+					break
+				}
+				finished = append(finished, b.Height)
+			case <-t.C:
+				if len(finished) == 0 {
+					break
+				}
+				sort.Sort(finished)
+				var i int
+				for i = 0; i < len(finished)-1; i++ {
+					if finished[i]+1 != finished[i+1] {
+						break
+					}
+				}
+				err := db.Batch("status", []byte("lastmerkle"), finished[i+1])
+				if err != nil {
+					log.Fatal(err)
+				}
+				finished = finished[i+1:]
+				t.Stop()
+				t.Reset(time.Minute)
+			}
+		}
+	}()
+}
+
+//ResetTx resets synced height of tx to 0
+func ResetTx() {
+	err := db.Batch("status", []byte("lastmerkle"), uint64(0))
+	if err != nil {
+		log.Fatal(err)
 	}
-	goGetMerkle()
 }

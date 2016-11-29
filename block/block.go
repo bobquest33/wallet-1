@@ -106,6 +106,17 @@ func (b *Block) packHeightPrev() []byte {
 	return out
 }
 
+//LoadBlock loads and returns Block struct from hash.
+func LoadBlock(hash []byte) (*Block, error) {
+	var b *Block
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		var err error
+		b, err = loadBlock(tx, hash)
+		return err
+	})
+	return b, err
+}
+
 func loadBlock(tx *bolt.Tx, hash []byte) (*Block, error) {
 	var dat []byte
 	var err error
@@ -161,6 +172,21 @@ func Lastblocks() []*Block {
 		log.Fatal(err)
 	}
 	return b
+}
+
+//Confirmed returns true if hash is confirmed.
+func Confirmed(b *Block) bool {
+	confirmed := false
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		if db.HasKey(tx, "blockheight", db.ToKey(b.Height)) {
+			confirmed = true
+		}
+		return nil
+	})
+	if err != nil {
+		return false
+	}
+	return confirmed
 }
 
 //Lastblock returns the last block.
@@ -277,27 +303,28 @@ func GetHashes(height uint64, n uint64) ([][]byte, error) {
 	return hashes, errr
 }
 
-//Height returns height of block whose hash is hash.
-func Height(hash []byte) (uint64, error) {
-	var bdb *Block
-	errr := db.DB.View(func(tx *bolt.Tx) error {
-		var err error
-		bdb, err = loadBlock(tx, hash)
-		return err
-	})
-	if errr != nil {
-		return 0, errr
+//AddMerkle adds a merkle block to the chain.
+func AddMerkle(mbs *msg.Merkleblock) (bool, error) {
+	headers := msg.Headers{
+		Inventory: make([]msg.BlockHeader, 1),
 	}
-	return bdb.Height, nil
+	headers.Inventory[0] = msg.BlockHeader{
+		HBlockHeader: mbs.HBlockHeader,
+		TxnCount:     0,
+	}
+	return Add(headers)
 }
 
-//Add adds blocks to the chain and returns hashes of these.
+//Add adds blocks to the chain.
 //We must add blocks in height order.
 func Add(mbs msg.Headers) (bool, error) {
 	finished := false
 	errr := db.DB.Update(func(tx *bolt.Tx) error {
 		for i, b := range mbs.Inventory {
 			h := b.Hash()
+			if db.HasKey(tx, "block", h) {
+				continue
+			}
 			previous, err := loadBlock(tx, b.Prev)
 			if err != nil {
 				log.Print(i, err)

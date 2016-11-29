@@ -109,7 +109,7 @@ func TestCreate2(t *testing.T) {
 			TxHash:   ha,
 			Value:    values[i],
 			Ttype:    0,
-			Height:   0,
+			Block:    params.GenesisHash,
 			Script:   script,
 			TxIndex:  uint32(i + 1),
 			Coinbase: false,
@@ -121,10 +121,12 @@ func TestCreate2(t *testing.T) {
 		Amount: 200 * params.Unit,
 		M:      2,
 	}
+
 	txout, err := pi.MultisigOut()
 	if err != nil {
 		t.Fatal(err)
 	}
+	log.Print("!")
 	if !bytes.Equal(redeem, pi.redeemScript()) {
 		t.Fatal("redeem script is illegal")
 	}
@@ -243,7 +245,7 @@ func TestCreate1(t *testing.T) {
 			TxHash:   ha,
 			Value:    values[i],
 			Ttype:    0,
-			Height:   0,
+			Block:    params.GenesisHash,
 			Script:   script,
 			TxIndex:  uint32(i + 1),
 			Coinbase: false,
