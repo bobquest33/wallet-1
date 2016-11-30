@@ -75,15 +75,15 @@ func Tob(v interface{}) ([]byte, error) {
 		return []byte(t), nil
 	case int:
 		b := make([]byte, 8)
-		binary.BigEndian.PutUint64(b, uint64(t))
+		binary.LittleEndian.PutUint64(b, uint64(t))
 		return b, nil
 	case int64:
 		b := make([]byte, 8)
-		binary.BigEndian.PutUint64(b, uint64(t))
+		binary.LittleEndian.PutUint64(b, uint64(t))
 		return b, nil
 	case uint64:
 		b := make([]byte, 8)
-		binary.BigEndian.PutUint64(b, t)
+		binary.LittleEndian.PutUint64(b, t)
 		return b, nil
 	default:
 		return json.Marshal(v)
@@ -119,11 +119,11 @@ func B2v(from []byte, to interface{}) error {
 	case *string:
 		(*t) = string(from)
 	case *int64:
-		(*t) = int64(binary.BigEndian.Uint64(from))
+		(*t) = int64(binary.LittleEndian.Uint64(from))
 	case *int:
-		(*t) = int(binary.BigEndian.Uint64(from))
+		(*t) = int(binary.LittleEndian.Uint64(from))
 	case *uint64:
-		(*t) = binary.BigEndian.Uint64(from)
+		(*t) = binary.LittleEndian.Uint64(from)
 	case nil:
 		//fallthrough
 	default:

@@ -100,6 +100,12 @@ func (n *Peer) Loop() error {
 	pch := n.goReadMessage()
 	t := time.NewTimer(3 * time.Minute)
 	for {
+		defer func() {
+			select {
+			case <-pch:
+			default:
+			}
+		}()
 		if err := n.resetDeadline(); err != nil {
 			return n.errClose(err)
 		}
@@ -119,7 +125,7 @@ func (n *Peer) Loop() error {
 				return n.errClose(err)
 			}
 			if err := f(p.payload, pch); err != nil {
-				return n.errClose(err)
+				log.Print(err)
 			}
 		case w := <-wch:
 			if err := n.setDeadline(); err != nil {
@@ -128,7 +134,7 @@ func (n *Peer) Loop() error {
 			err := n.writeMessage(w.cmd, w.data)
 			w.err <- err
 			if err != nil {
-				return n.errClose(err)
+				log.Println(err)
 			}
 			log.Print("sended ", w.cmd)
 		case <-t.C:

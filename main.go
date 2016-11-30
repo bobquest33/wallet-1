@@ -34,7 +34,10 @@ import (
 	"runtime/pprof"
 	"time"
 
+	"runtime/debug"
+
 	"github.com/monarj/wallet/block"
+	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/peer"
 )
 
@@ -53,11 +56,18 @@ func main() {
 	defer pprof.WriteHeapProfile(f2)
 
 	log.SetFlags(log.Ldate | log.Lshortfile | log.Ltime)
+	log.Print("writing lastmerkle")
+	err = db.Batch("status", []byte("lastmerkle"), uint64(0))
+	if err != nil {
+		log.Fatal(err)
+	}
 	peer.Run()
-	time.Sleep(time.Minute)
+	time.Sleep(30 * time.Minute)
+
 	h := block.Lastblocks()
 	for _, hh := range h {
 		log.Print(hh.Height)
 	}
-	log.Print(block.DownloadedBlockNumber())
+	debug.PrintStack()
+	log.Print(block.DownloadedBlockNumber(), peer.Alives())
 }

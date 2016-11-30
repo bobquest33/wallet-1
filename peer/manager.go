@@ -99,42 +99,49 @@ func Resolve() {
 		}()
 		wg.Wait()
 	}
+	log.Println("#peers", peersNum())
 }
 
 //Connect connects to node ,send a version packet,
 //and returns Node struct.
-func Connect() error {
-	for _, addr := range peers {
-		if length() > maxNodes {
-			return nil
+func Connect() {
+	go func() {
+		for {
+			peers2 := make(map[string]*net.TCPAddr)
+			mutex.RLock()
+			for k, v := range peers {
+				peers2[k] = v
+			}
+			mutex.RUnlock()
+			for s, addr := range peers2 {
+				log.Printf("connecting %s", s)
+				conn, err := net.DialTimeout("tcp", s, 5*time.Second)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				n := &Peer{conn: conn.(*net.TCPConn)}
+				mutex.Lock()
+				_, exist := alive[s]
+				if exist {
+					mutex.Unlock()
+					continue
+				}
+				alive[s] = n
+				mutex.Unlock()
+				if err = n.Handshake(); err != nil {
+					log.Println(err)
+					continue
+				}
+				log.Printf("connected %s", addr)
+				if err = n.Loop(); err != nil {
+					log.Println(err)
+					Del(addr)
+				}
+			}
+			log.Fatal()
 		}
-		go func(addr *net.TCPAddr) {
-			log.Printf("connecting %s", addr)
-			conn, err := net.DialTCP("tcp", nil, addr)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			n := &Peer{conn: conn}
-			mutex.Lock()
-			alive[n.String()] = n
-			mutex.Unlock()
-			defer func() {
-				Del(n.conn.RemoteAddr())
-			}()
-			if err = n.Handshake(); err != nil {
-				log.Println(err)
-				return
-			}
-			if errr := n.Loop(); errr != nil {
-				log.Println(errr)
-			}
-		}(addr)
-	}
-	if length() < maxNodes {
-		log.Println("shortage of nodes")
-	}
-	return nil
+	}()
 }
 
 func length() int {
@@ -151,6 +158,7 @@ func peersNum() int {
 
 var (
 	hashes = make(chan []byte, maxNodes*10)
+	synced = false
 )
 
 //Run starts to connect nodes.
@@ -158,13 +166,13 @@ func Run() {
 	log.Print("resolving dns")
 	Resolve()
 	log.Print("connecting")
-	Connect()
-	go func() {
-		for range time.Tick(15 * time.Minute) {
-			log.Print("reconnecting")
-			Connect()
-		}
-	}()
+	for i := 0; i < maxNodes; i++ {
+		Connect()
+	}
+	for length() < maxNodes {
+		log.Print("waiting for alive peers, now ", length())
+		time.Sleep(5 * time.Second)
+	}
 	log.Print("start to get header")
 	goGetHeader()
 	log.Print("start to get txs")
@@ -172,34 +180,41 @@ func Run() {
 	getMerkle()
 }
 
+func Alives() int {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	return len(alive)
+}
+
 func isFinished(bs []*block.Block) bool {
 	if len(bs) != 1 {
 		return false
 	}
-	last := true
+	mutex.RLock()
+	defer mutex.RUnlock()
 	for _, n := range alive {
-		if uint64(n.LastBlock) != bs[0].Height {
-			last = false
-			break
+		if uint64(n.LastBlock) > bs[0].Height+params.Nconfirmed {
+			return false
 		}
 	}
-	return last
+	return true
 }
 
 //goGetHeader is goroutine which gets header continually.
 func goGetHeader() {
-	waittime := 10 * time.Second
 	go func() {
 		for {
 			bs := block.Lastblocks()
+			log.Println("last confirmed block ", bs[0].Height)
 			if isFinished(bs) {
+				synced = true
 				log.Print("finished syncing header.")
-				waittime = 5 * time.Minute
+				time.Sleep(5 * time.Minute)
 			}
 			for _, b := range bs {
 				hashes <- b.Hash
 			}
-			t := time.NewTimer(waittime)
+			t := time.NewTimer(10 * time.Second)
 		loop:
 			for {
 				select {
@@ -234,7 +249,7 @@ func goGetHeader() {
 				if !t.Stop() {
 					<-t.C
 				}
-				t.Reset(waittime)
+				t.Reset(10 * time.Second)
 			}
 		}
 	}()
@@ -257,8 +272,10 @@ func getMerkle() {
 			})
 			if err != nil {
 				log.Print(err)
+				time.Sleep(time.Minute)
+				break
 			}
-			for height := lastheight; ; height++ {
+			for height := lastheight; ; height += size {
 				hs, err := block.GetHashes(height, size)
 				if err != nil || len(hs) == 0 {
 					log.Print(err, len(hs))
@@ -281,49 +298,50 @@ func goGetMerkle() {
 				data: po,
 				err:  make(chan error),
 			}
-			go func(hashes [][]byte) {
-				wch <- cmd
-				if err := <-cmd.err; err != nil {
-					txhashes <- hashes
-					log.Print(err)
-					return
-				}
-			}(hashes)
+			wch <- cmd
+			if err := <-cmd.err; err != nil {
+				txhashes <- hashes
+				log.Print(err)
+				return
+			}
 		}
 	}()
 }
 
 func gosaveMerkleInfo() {
 	go func() {
+		t := time.NewTimer(30 * time.Second)
+		var finished block.UInt64Slice
 		for {
-			t := time.NewTimer(time.Minute)
-			var finished block.UInt64Slice
 			select {
 			case h := <-gotMerkle:
 				b, err := block.LoadBlock(h)
 				if err != nil {
 					log.Print(err)
-					break
+					continue
 				}
 				finished = append(finished, b.Height)
 			case <-t.C:
-				if len(finished) == 0 {
-					break
-				}
-				sort.Sort(finished)
-				var i int
-				for i = 0; i < len(finished)-1; i++ {
-					if finished[i]+1 != finished[i+1] {
-						break
+				if len(finished) > 0 {
+					sort.Sort(finished)
+					var i int
+					for i = 0; i < len(finished)-1; i++ {
+						if finished[i]+1 < finished[i+1] {
+							break
+						}
+					}
+					err := db.Batch("status", []byte("lastmerkle"), finished[i])
+					if err != nil {
+						log.Fatal(err)
+					}
+					log.Println("saved ", finished[i])
+					if len(finished) > i {
+						copy(finished[0:], finished[i+1:])
+						finished = finished[:len(finished)-i]
 					}
 				}
-				err := db.Batch("status", []byte("lastmerkle"), finished[i+1])
-				if err != nil {
-					log.Fatal(err)
-				}
-				finished = finished[i+1:]
 				t.Stop()
-				t.Reset(time.Minute)
+				t.Reset(30 * time.Second)
 			}
 		}
 	}()

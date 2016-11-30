@@ -275,7 +275,7 @@ func DownloadedBlockNumber() uint64 {
 				end = checkpoints[i+1]
 			}
 			last := findLast(tx, checkpoints[i], end)
-			num += (last - checkpoints[i])
+			num += (last - checkpoints[i]) + 1
 		}
 		return nil
 	})
@@ -322,9 +322,6 @@ func Add(mbs msg.Headers) (bool, error) {
 	errr := db.DB.Update(func(tx *bolt.Tx) error {
 		for i, b := range mbs.Inventory {
 			h := b.Hash()
-			if db.HasKey(tx, "block", h) {
-				continue
-			}
 			previous, err := loadBlock(tx, b.Prev)
 			if err != nil {
 				log.Print(i, err)
@@ -336,13 +333,16 @@ func Add(mbs msg.Headers) (bool, error) {
 				Prev:   b.Prev,
 				Height: previous.Height + 1,
 			}
-			if c, ok := params.CheckPoints[block.Height]; ok {
+			c, isCheckPoint := params.CheckPoints[block.Height]
+			if !isCheckPoint && db.HasKey(tx, "block", h) {
+				continue
+			}
+			if isCheckPoint {
 				if !bytes.Equal(c, h) {
 					err = errors.New("didn't match checkpoint hash")
 					return err
 				}
 				finished = true
-				return nil
 			}
 			if err = b.IsOK(block.Height); err != nil {
 				return err

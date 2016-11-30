@@ -38,9 +38,11 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/block"
 	"github.com/monarj/wallet/bloom"
+	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/key"
 	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/myself"
@@ -207,6 +209,9 @@ func (n *Peer) readInv(payload io.Reader, pch <-chan *packet) error {
 	if err := msg.Unpack(payload, &p); err != nil {
 		return err
 	}
+	if !synced {
+		return nil
+	}
 	hashes := make([][]byte, 0, len(p.Inventory))
 	for _, inv := range p.Inventory {
 		log.Printf("readinv %d %s", inv.Type, behex.EncodeToString(inv.Hash))
@@ -228,7 +233,7 @@ func (n *Peer) readInv(payload io.Reader, pch <-chan *packet) error {
 		err:  make(chan error),
 	}
 	wch <- cmd
-	if err := cmd.err; err != nil {
+	if err := <-cmd.err; err != nil {
 		log.Print(err)
 	}
 	return nil
@@ -291,16 +296,28 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	}
 	hblock := p.Hash()
 	log.Println(behex.EncodeToString(hblock))
-	if _, err := block.AddMerkle(&p); err != nil {
-		txhashes <- [][]byte{hblock}
-		return err
+	if !bytes.Equal(hblock, params.GenesisHash) {
+		has := false
+		errr := db.DB.View(func(tx *bolt.Tx) error {
+			has = db.HasKey(tx, "block", hblock)
+			return nil
+		})
+		if errr != nil {
+			log.Fatal(err)
+		}
+		if !has {
+			if _, err = block.AddMerkle(&p); err != nil {
+				txhashes <- [][]byte{hblock}
+				return err
+			}
+		}
 	}
 	txs, err := p.FilteredTx()
 	if err != nil {
 		txhashes <- [][]byte{hblock}
 		return err
 	}
-	log.Println(len(txs), len(p.Hashes))
+	log.Println("merkle txs len:", len(txs), "hash len:", len(p.Hashes))
 	for i := 0; i < len(txs); i++ {
 		p := <-pch
 		if p.err != nil {
