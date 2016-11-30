@@ -570,7 +570,7 @@ func lyra2(k []byte, pwd []byte, salt []byte, timeCost uint64, nRows int, nCols 
 			step = -1
 		}
 
-		for {
+		for row0 := false; !row0; row0 = (row == 0) {
 			//Selects a pseudorandom index row*
 			//------------------------------------------------------------------------------------------
 			//rowa = ((unsigned int)state[0]) & (nRows-1);	//(USE THIS IF nRows IS A POWER OF 2)
@@ -588,9 +588,6 @@ func lyra2(k []byte, pwd []byte, salt []byte, timeCost uint64, nRows int, nCols 
 			//row = (row + step) & (nRows-1);	//(USE THIS IF nRows IS A POWER OF 2)
 			row = (row + step) % nRows //(USE THIS FOR THE "GENERIC" CASE)
 			//------------------------------------------------------------------------------------------
-			if row == 0 {
-				break
-			}
 		}
 	}
 	//==========================================================================/

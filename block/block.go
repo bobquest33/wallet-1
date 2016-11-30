@@ -378,6 +378,32 @@ func goback(tx *bolt.Tx, hash []byte, n uint64) (*Block, error) {
 	return bdb, nil
 }
 
+func addHistory(tx *bolt.Tx, bdb *Block, indexes []msg.Hash) []msg.Hash {
+	var err error
+	for i := 0; i < 10 && bdb.Height > 0 && !bytes.Equal(zero, bdb.Prev); i++ {
+		bdb, err = loadBlock(tx, bdb.Prev)
+		if err != nil || bdb == nil {
+			break
+		}
+		indexes = append(indexes, msg.Hash{Hash: bdb.Hash})
+	}
+	if bdb.Height < 2 {
+		return indexes
+	}
+	var step uint64 = 2
+	for height := bdb.Height - step; ; height -= step {
+		h, err := db.Get(tx, "blockheight", db.ToKey(height), nil)
+		if err == nil {
+			indexes = append(indexes, msg.Hash{Hash: h})
+		}
+		step <<= 1
+		if height < step {
+			break
+		}
+	}
+	return indexes
+}
+
 //LocatorHash is processed by a node in the order as they appear in the message.
 func LocatorHash(lasthash []byte) ([]msg.Hash, error) {
 	var indexes []msg.Hash
@@ -388,28 +414,7 @@ func LocatorHash(lasthash []byte) ([]msg.Hash, error) {
 			return err
 		}
 		indexes = append(indexes, msg.Hash{Hash: bdb.Hash})
-		for i := 0; i < 10 && bdb.Height > 0 && !bytes.Equal(zero, bdb.Prev); i++ {
-			bdb2, errr := loadBlock(tx, bdb.Prev)
-			if errr != nil || bdb2 == nil {
-				break
-			}
-			indexes = append(indexes, msg.Hash{Hash: bdb2.Hash})
-			bdb = bdb2
-		}
-		if bdb.Height < 2 {
-			return nil
-		}
-		var step uint64 = 2
-		for height := bdb.Height - step; ; height -= step {
-			h, err := db.Get(tx, "blockheight", db.ToKey(height), nil)
-			if err == nil {
-				indexes = append(indexes, msg.Hash{Hash: h})
-			}
-			step <<= 1
-			if height < step {
-				break
-			}
-		}
+		indexes = addHistory(tx, bdb, indexes)
 		return nil
 	})
 	if !bytes.Equal(indexes[len(indexes)-1].Hash, params.GenesisHash) {

@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 )
 
@@ -65,7 +66,11 @@ func (j *JSONRPC) Call() (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Print(err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		fmt.Println("response Status:", resp.Status)

@@ -190,9 +190,9 @@ func NewP2PK(sends ...*Send) (*msg.Tx, error) {
 		TxOut:    txouts,
 		Locktime: 0,
 	}
-	fillSign(&result, privs)
+	err = fillSign(&result, privs)
 
-	return &result, nil
+	return &result, err
 }
 
 //PubInfo is infor of public key in M of N multisig.
@@ -255,9 +255,9 @@ func (p *PubInfo) MultisigOut() (*msg.Tx, error) {
 		TxOut:    txouts,
 		Locktime: 0,
 	}
-	fillSign(&result, privs)
+	err = fillSign(&result, privs)
 	p.Prev = &result
-	return &result, nil
+	return &result, err
 }
 
 func (p *PubInfo) searchTxout() (uint32, error) {

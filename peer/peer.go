@@ -121,16 +121,10 @@ func (n *Peer) Loop() error {
 				log.Printf("%s:unknown or unsupported command", p.cmd)
 				continue
 			}
-			if err := n.setDeadline(); err != nil {
-				return n.errClose(err)
-			}
 			if err := f(p.payload, pch); err != nil {
 				log.Print(err)
 			}
 		case w := <-wch:
-			if err := n.setDeadline(); err != nil {
-				return n.errClose(err)
-			}
 			err := n.writeMessage(w.cmd, w.data)
 			w.err <- err
 			if err != nil {
@@ -140,9 +134,6 @@ func (n *Peer) Loop() error {
 		case <-t.C:
 			if n.timeout++; n.timeout > timeout {
 				return errors.New("timeout")
-			}
-			if err := n.setDeadline(); err != nil {
-				return n.errClose(err)
 			}
 			if err := n.writePing(); err != nil {
 				return n.errClose(err)
@@ -167,42 +158,28 @@ func (n *Peer) Handshake() error {
 		return err
 	}
 	log.Println("sended a Version packet to", n.String())
-	cmd, payload, err := n.readMessage()
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	if cmd != "version" {
-		return errors.New("not version packcket from " + n.String())
-	}
-	_, err = n.parseVersion(payload)
-	if err != nil {
+	if _, err := n.readVersion(); err != nil {
 		log.Println(err)
 		return err
 	}
 	log.Println("recv version from ", n.String())
 
-	cmd, _, err = n.readMessage()
-	if err != nil {
-		return n.errClose(err)
-	}
-	if cmd != "verack" {
-		err = errors.New("no verack")
+	if err := n.readVerack(); err != nil {
 		return n.errClose(err)
 	}
 	log.Println("received verack")
 
-	if err = n.writeMessage("verack", struct{}{}); err != nil {
+	if err := n.writeMessage("verack", struct{}{}); err != nil {
 		log.Println(err)
 		return err
 	}
 	log.Println("sended verack")
 
-	if err = n.writePing(); err != nil {
+	if err := n.writePing(); err != nil {
 		return n.errClose(err)
 	}
 
-	if err = n.writeFilterload(); err != nil {
+	if err := n.writeFilterload(); err != nil {
 		log.Println(err)
 		return err
 	}
@@ -210,7 +187,7 @@ func (n *Peer) Handshake() error {
 		return nil
 	}
 
-	if err = n.writeMessage("getaddr", struct{}{}); err != nil {
+	if err := n.writeMessage("getaddr", struct{}{}); err != nil {
 		log.Println(err)
 		return err
 	}

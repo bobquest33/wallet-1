@@ -38,11 +38,9 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/boltdb/bolt"
 	"github.com/monarj/wallet/behex"
 	"github.com/monarj/wallet/block"
 	"github.com/monarj/wallet/bloom"
-	"github.com/monarj/wallet/db"
 	"github.com/monarj/wallet/key"
 	"github.com/monarj/wallet/msg"
 	"github.com/monarj/wallet/myself"
@@ -55,6 +53,9 @@ var gotMerkle = make(chan []byte)
 //ReadMessage read a message packet from buf and returns
 //cmd and payload.
 func (n *Peer) readMessage() (string, *bytes.Buffer, error) {
+	if err := n.setDeadline(); err != nil {
+		return "", nil, err
+	}
 	var message msg.Message
 	if err := msg.Unpack(n.conn, &message); err != nil {
 		log.Println(err)
@@ -91,6 +92,10 @@ func (n *Peer) goReadMessage() <-chan *packet {
 
 //writeMessage writes payload in message packet.
 func (n *Peer) writeMessage(cmd string, payload interface{}) error {
+	if err := n.setDeadline(); err != nil {
+		return err
+	}
+
 	var buf bytes.Buffer
 	if err := msg.Pack(&buf, payload); err != nil {
 		return err
@@ -108,8 +113,28 @@ func (n *Peer) writeMessage(cmd string, payload interface{}) error {
 	return msg.Pack(n.conn, message)
 }
 
-//parseVersion makes and returs version struct from payload with checking it.
-func (n *Peer) parseVersion(payload io.Reader) (*msg.Version, error) {
+//readVerack read verack from payload with checking it.
+func (n *Peer) readVerack() error {
+	cmd, _, err := n.readMessage()
+	if err != nil {
+		return err
+	}
+	if cmd != "verack" {
+		err = errors.New("no verack")
+		return err
+	}
+	return nil
+}
+
+//readVersion makes and returs version struct from payload with checking it.
+func (n *Peer) readVersion() (*msg.Version, error) {
+	cmd, payload, err := n.readMessage()
+	if err != nil {
+		return nil, err
+	}
+	if cmd != "version" {
+		return nil, errors.New("not version packcket from " + n.String())
+	}
 	version := msg.Version{}
 	if err := msg.Unpack(payload, &version); err != nil {
 		return nil, err
@@ -297,15 +322,8 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	hblock := p.Hash()
 	log.Println(behex.EncodeToString(hblock))
 	if !bytes.Equal(hblock, params.GenesisHash) {
-		has := false
-		errr := db.DB.View(func(tx *bolt.Tx) error {
-			has = db.HasKey(tx, "block", hblock)
-			return nil
-		})
-		if errr != nil {
-			log.Fatal(err)
-		}
-		if !has {
+		_, err = block.LoadBlock(hblock)
+		if err != nil {
 			if _, err = block.AddMerkle(&p); err != nil {
 				txhashes <- [][]byte{hblock}
 				return err
@@ -318,7 +336,7 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 		return err
 	}
 	log.Println("merkle txs len:", len(txs), "hash len:", len(p.Hashes))
-	for i := 0; i < len(txs); i++ {
+	for range txs {
 		p := <-pch
 		if p.err != nil {
 			txhashes <- [][]byte{hblock}

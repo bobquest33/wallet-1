@@ -180,6 +180,7 @@ func Run() {
 	getMerkle()
 }
 
+//Alives returns num of alive peers.
 func Alives() int {
 	mutex.RLock()
 	defer mutex.RUnlock()

@@ -40,6 +40,11 @@ import (
 //VarInt is variable integer in bitcoin protocol.
 type VarInt uint64
 
+const (
+	prevTag = "prev"
+	varTag  = "var"
+)
+
 //Pack converts struct to []byte.
 func Pack(buf io.Writer, t interface{}) error {
 	v := reflect.ValueOf(t)
@@ -77,16 +82,10 @@ func Pack(buf io.Writer, t interface{}) error {
 		case []byte:
 			var err error
 			tag := ty.Field(i).Tag
-			if tag.Get("len") == "prev" {
-				result = int2varint(uint64(len(dat)))
-				result = append(result, dat...)
-				break
-			}
-			result, err = makeBytesFromTag(tag, val)
+			result, err = makeBytesFromTagForPack(tag, val, dat)
 			if err != nil {
 				return err
 			}
-			copy(result, dat)
 		case VarInt:
 			result = int2varint(uint64(dat))
 			val = uint64(dat)
@@ -102,7 +101,7 @@ func Pack(buf io.Writer, t interface{}) error {
 					return err
 				}
 			case reflect.Slice:
-				if ty.Field(i).Tag.Get("len") == "prev" {
+				if ty.Field(i).Tag.Get("len") == prevTag {
 					if _, err := buf.Write(int2varint(uint64(f.Len()))); err != nil {
 						return err
 					}
@@ -203,13 +202,7 @@ func Unpack(buf io.Reader, t interface{}) error {
 		case []byte:
 			var err error
 			tag := ty.Field(i).Tag
-			if tag.Get("len") == "prev" {
-				val, err = byte2varint(buf)
-				if err != nil {
-					return err
-				}
-			}
-			dat, err := makeBytesFromTag(tag, val)
+			dat, err := makeBytesFromTag(tag, val, buf)
 			if err != nil {
 				return err
 			}
@@ -225,14 +218,7 @@ func Unpack(buf io.Reader, t interface{}) error {
 				}
 			case reflect.Slice:
 				tag := ty.Field(i).Tag
-				var err error
-				if tag.Get("len") == "prev" {
-					val, err = byte2varint(buf)
-					if err != nil {
-						return err
-					}
-				}
-				newv, err := makeValueFromTag(tag, val, vi)
+				newv, err := makeValueFromTag(tag, val, vi, buf)
 				if err != nil {
 					return err
 				}
@@ -253,35 +239,64 @@ func Unpack(buf io.Reader, t interface{}) error {
 	return nil
 }
 
-func getTagValue(tag reflect.StructTag, val uint64) (int, error) {
+func getTagValue(tag reflect.StructTag, val uint64, buf io.Reader) (int, error) {
 	le := tag.Get("len")
 	var n int
 	var err error
 	switch le {
-	case "var":
-		fallthrough
-	case "prev":
+	case varTag:
+		n = int(val)
+	case prevTag:
+		val, err = byte2varint(buf)
+		if err != nil {
+			return 0, err
+		}
 		n = int(val)
 	case "":
-		err = fmt.Errorf("no len tag")
+		err = fmt.Errorf("no tag for slice")
 	default:
 		n, err = strconv.Atoi(le)
 	}
 	return n, err
 }
 
-func makeBytesFromTag(tag reflect.StructTag, val uint64) ([]byte, error) {
-	n, err := getTagValue(tag, val)
+func makeBytesFromTag(tag reflect.StructTag, val uint64, buf io.Reader) ([]byte, error) {
+	n, err := getTagValue(tag, val, buf)
 	if err != nil {
 		return nil, err
 	}
 	d := make([]byte, n)
 	return d, nil
 }
+func makeBytesFromTagForPack(tag reflect.StructTag, val uint64, dat []byte) ([]byte, error) {
+	le := tag.Get("len")
+	switch le {
+	case varTag:
+		b := make([]byte, val)
+		copy(b, dat)
+		return b, nil
+	case prevTag:
+		ll := int2varint(uint64(len(dat)))
+		b := make([]byte, len(dat)+len(ll))
+		copy(b, ll)
+		copy(b[len(ll):], dat)
+		return b, nil
+	case "":
+		return nil, fmt.Errorf("no tag for slice")
+	default:
+		n, err := strconv.Atoi(le)
+		if err != nil {
+			return nil, err
+		}
+		b := make([]byte, n)
+		copy(b, dat)
+		return b, nil
+	}
+}
 
 func makeValueFromTag(tag reflect.StructTag, val uint64,
-	vi reflect.Value) (*reflect.Value, error) {
-	n, err := getTagValue(tag, val)
+	vi reflect.Value, buf io.Reader) (*reflect.Value, error) {
+	n, err := getTagValue(tag, val, buf)
 	if err != nil {
 		return nil, err
 	}

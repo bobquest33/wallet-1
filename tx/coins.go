@@ -44,8 +44,8 @@ import (
 )
 
 var (
-	notify = make(map[string]chan *msg.Tx)
-	mutex  sync.RWMutex
+	notifyTX = make(map[string]chan *msg.Tx)
+	mutex    sync.RWMutex
 )
 
 //AddNotify adds pubscript to be notified.
@@ -53,7 +53,7 @@ func AddNotify(pubscr []byte) chan *msg.Tx {
 	ch := make(chan *msg.Tx)
 	mutex.Lock()
 	defer mutex.Unlock()
-	notify[string(pubscr)] = ch
+	notifyTX[string(pubscr)] = ch
 	return ch
 }
 
@@ -114,12 +114,12 @@ func SortedCoins() Coins {
 	return coins
 }
 
-func saveCoin(l *Coin) error {
+func (c *Coin) save() error {
 	spent := false
 	err := db.DB.Batch(func(tx *bolt.Tx) error {
-		if db.HasKey(tx, "spend", l.TxHash) {
+		if db.HasKey(tx, "spend", c.TxHash) {
 			spent = true
-			return db.Del(tx, "spend", l.TxHash)
+			return db.Del(tx, "spend", c.TxHash)
 		}
 		return nil
 	})
@@ -129,11 +129,12 @@ func saveCoin(l *Coin) error {
 	if spent {
 		return nil
 	}
+
 	dat := bytes.Buffer{}
-	if err := msg.Pack(&dat, *l); err != nil {
+	if err := msg.Pack(&dat, *c); err != nil {
 		return err
 	}
-	k := db.ToKey(l.TxHash, l.TxIndex)
+	k := db.ToKey(c.TxHash, c.TxIndex)
 	return db.Batch("coin", k, dat.Bytes())
 }
 
@@ -142,11 +143,11 @@ type Coin struct {
 	Pubkey   []byte `len:"prev"`
 	TxHash   []byte `len:"32"`
 	Value    uint64
-	Ttype    byte
 	Block    []byte `len:"32"`
 	Script   []byte `len:"prev"`
 	TxIndex  uint32
 	Coinbase bool
+	Ttype    byte
 }
 
 //RemoveKey removes coins associated with pub.
@@ -229,7 +230,7 @@ func parse(s interface{}, data []byte) error {
 	return nil
 }
 
-func parseScriptsigH(data []byte) (*bytes.Buffer, error) {
+func parseScriptsigHT(data []byte) (*ScriptSigT, error) {
 	s := ScriptSigH{}
 	buf := bytes.NewBuffer(data)
 	if err := msg.Unpack(buf, &s); err != nil {
@@ -246,18 +247,15 @@ func parseScriptsigH(data []byte) (*bytes.Buffer, error) {
 	case s.PrefixL02 != 0x02:
 		return nil, errors.New("unsuported scriptsig")
 	}
-	return buf, nil
-}
 
-func parseScriptsigT(buf *bytes.Buffer, data []byte) (*ScriptSigT, error) {
-	s := ScriptSigT{}
-	if err := msg.Unpack(buf, &s); err != nil {
+	st := ScriptSigT{}
+	if err := msg.Unpack(buf, &st); err != nil {
 		return nil, errors.New("this tx is not supported(unknown format)")
 	}
 	if buf.Len() != 0 {
 		return nil, fmt.Errorf("this tx is not supported")
 	}
-	return &s, nil
+	return &st, nil
 }
 
 //Add adds or removes transanctions from a tx packet.
@@ -270,18 +268,12 @@ func Add(mtx *msg.Tx, hash []byte) error {
 			coinbase = true
 			break
 		}
-		buf, err := parseScriptsigH(in.Script)
+		s, err := parseScriptsigHT(in.Script)
 		if err != nil {
 			log.Println(err)
 			continue
 		}
-		s, err := parseScriptsigT(buf, in.Script)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		_, err = checkTxin(s)
-		if err != nil {
+		if _, err = checkTxin(s); err != nil {
 			log.Println(err)
 			continue
 		}
@@ -290,33 +282,7 @@ func Add(mtx *msg.Tx, hash []byte) error {
 		}
 	}
 	for i, in := range mtx.TxOut {
-		for k, v := range notify {
-			if bytes.Equal(in.Script, []byte(k)) {
-				delete(notify, k)
-				v <- mtx
-			}
-		}
-		s1 := Script{}
-		err1 := parse(&s1, in.Script)
-		s2 := Script2{}
-		err2 := parse(&s2, in.Script)
-
-		var pubkey *key.PublicKey
-		var err error
-		var ttype byte
-		switch {
-		case err1 == nil:
-			log.Println("pubkeyhash scriptsig")
-			pubkey, err = checkTxout(&s1)
-			ttype = 0
-		case err2 == nil:
-			log.Println("pubkey scriptsig")
-			pubkey, err = checkTxout2(&s2)
-			ttype = 1
-		default:
-			log.Println(err1, err2)
-			err = fmt.Errorf("This txout is not supproted")
-		}
+		pubkey, ttype, err := parseTXout(in.Script)
 		if err != nil {
 			log.Println(err, behex.EncodeToString(mtx.Hash()))
 			continue
@@ -331,11 +297,46 @@ func Add(mtx *msg.Tx, hash []byte) error {
 			Coinbase: coinbase,
 			Script:   in.Script,
 		}
-		if err = saveCoin(c); err != nil {
+		if err = c.save(); err != nil {
 			return err
 		}
+		notify(mtx, in.Script)
 	}
 	return nil
+}
+
+func notify(mtx *msg.Tx, inscript []byte) {
+	for k, v := range notifyTX {
+		if bytes.Equal(inscript, []byte(k)) {
+			delete(notifyTX, k)
+			v <- mtx
+		}
+	}
+}
+
+func parseTXout(inscript []byte) (*key.PublicKey, byte, error) {
+	s1 := Script{}
+	err1 := parse(&s1, inscript)
+	s2 := Script2{}
+	err2 := parse(&s2, inscript)
+
+	var pubkey *key.PublicKey
+	var err error
+	var ttype byte
+	switch {
+	case err1 == nil:
+		log.Println("pubkeyhash scriptsig")
+		pubkey, err = checkTxout(&s1)
+		ttype = 0
+	case err2 == nil:
+		log.Println("pubkey scriptsig")
+		pubkey, err = checkTxout2(&s2)
+		ttype = 1
+	default:
+		log.Println(err1, err2)
+		err = fmt.Errorf("This txout is not supproted")
+	}
+	return pubkey, ttype, err
 }
 
 func checkTxin(s *ScriptSigT) (*key.PublicKey, error) {

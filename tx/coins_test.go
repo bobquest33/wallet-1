@@ -175,7 +175,7 @@ func TestTx2(t *testing.T) {
 		t.Fatal("value differes", coins[0].Value)
 	}
 	log.Println(behex.EncodeToString(txs[1].Hash()))
-	if err := Add(txs[1], make([]byte, 32)); err != nil {
+	if err = Add(txs[1], make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
 	coins, err = GetCoins(a)

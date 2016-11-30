@@ -114,7 +114,9 @@ func TestCreate2(t *testing.T) {
 			TxIndex:  uint32(i + 1),
 			Coinbase: false,
 		}
-		saveCoin(coin)
+		if err = coin.save(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	pi := &PubInfo{
 		Pubs:   []*key.PublicKey{pkey2.PublicKey, pkey3.PublicKey, pkey.PublicKey},
@@ -250,7 +252,9 @@ func TestCreate1(t *testing.T) {
 			TxIndex:  uint32(i + 1),
 			Coinbase: false,
 		}
-		saveCoin(coin)
+		if err = coin.save(); err != nil {
+			log.Fatal(err)
+		}
 	}
 	send := &Send{
 		Addr:   "MS43dMzRKfEs99Q931zFECfUhdvtWmbsPt",
