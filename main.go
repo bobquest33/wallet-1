@@ -69,5 +69,5 @@ func main() {
 		log.Print(hh.Height)
 	}
 	debug.PrintStack()
-	log.Print(block.DownloadedBlockNumber(), peer.Alives())
+	log.Print(block.DownloadedBlockNumber(), peer.AliveNum())
 }

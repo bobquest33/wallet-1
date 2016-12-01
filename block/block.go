@@ -117,6 +117,19 @@ func LoadBlock(hash []byte) (*Block, error) {
 	return b, err
 }
 
+//HasBlock returns true is block hash is in blocks.
+func HasBlock(hash []byte) bool {
+	has := false
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		var err error
+		has = db.HasKey(tx, "block", hash)
+		return err
+	})
+	if err != nil {
+		log.Print(err)
+	}
+	return has
+}
 func loadBlock(tx *bolt.Tx, hash []byte) (*Block, error) {
 	var dat []byte
 	var err error
@@ -305,6 +318,7 @@ func GetHashes(height uint64, n uint64) ([][]byte, error) {
 
 //AddMerkle adds a merkle block to the chain.
 func AddMerkle(mbs *msg.Merkleblock) (bool, error) {
+	log.Print("!")
 	headers := msg.Headers{
 		Inventory: make([]msg.BlockHeader, 1),
 	}
@@ -380,12 +394,13 @@ func goback(tx *bolt.Tx, hash []byte, n uint64) (*Block, error) {
 
 func addHistory(tx *bolt.Tx, bdb *Block, indexes []msg.Hash) []msg.Hash {
 	var err error
-	for i := 0; i < 10 && bdb.Height > 0 && !bytes.Equal(zero, bdb.Prev); i++ {
-		bdb, err = loadBlock(tx, bdb.Prev)
+	bdb2 := bdb
+	for i := 0; i < 10 && bdb2.Height > 0 && !bytes.Equal(zero, bdb2.Prev); i++ {
+		bdb2, err = loadBlock(tx, bdb2.Prev)
 		if err != nil || bdb == nil {
 			break
 		}
-		indexes = append(indexes, msg.Hash{Hash: bdb.Hash})
+		indexes = append(indexes, msg.Hash{Hash: bdb2.Hash})
 	}
 	if bdb.Height < 2 {
 		return indexes

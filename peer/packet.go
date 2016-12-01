@@ -48,9 +48,7 @@ import (
 	"github.com/monarj/wallet/tx"
 )
 
-var gotMerkle = make(chan []byte)
-
-//ReadMessage read a message packet from buf and returns
+///ReadMessage read a message packet from buf and returns
 //cmd and payload.
 func (n *Peer) readMessage() (string, *bytes.Buffer, error) {
 	if err := n.setDeadline(); err != nil {
@@ -321,13 +319,10 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 	}
 	hblock := p.Hash()
 	log.Println(behex.EncodeToString(hblock))
-	if !bytes.Equal(hblock, params.GenesisHash) {
-		_, err = block.LoadBlock(hblock)
-		if err != nil {
-			if _, err = block.AddMerkle(&p); err != nil {
-				txhashes <- [][]byte{hblock}
-				return err
-			}
+	if !bytes.Equal(hblock, params.GenesisHash) && !block.HasBlock(hblock) {
+		if _, err = block.AddMerkle(&p); err != nil {
+			txhashes <- [][]byte{hblock}
+			return err
 		}
 	}
 	txs, err := p.FilteredTx()
@@ -353,7 +348,11 @@ func (n *Peer) readMerkle(payload io.Reader, pch <-chan *packet) error {
 		}
 	}
 	log.Println("read merkle")
-	gotMerkle <- hblock
+	bb, err := block.LoadBlock(hblock)
+	if err != nil {
+		log.Fatal(err)
+	}
+	gotTX <- bb.Height
 	return nil
 }
 

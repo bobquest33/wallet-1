@@ -139,12 +139,12 @@ func Connect() {
 					Del(addr)
 				}
 			}
-			log.Fatal()
 		}
 	}()
 }
 
-func length() int {
+//AliveNum returns number of alive peers.
+func AliveNum() int {
 	mutex.RLock()
 	defer mutex.RUnlock()
 	return len(alive)
@@ -169,25 +169,23 @@ func Run() {
 	for i := 0; i < maxNodes; i++ {
 		Connect()
 	}
-	for length() < maxNodes {
-		log.Print("waiting for alive peers, now ", length())
+	for AliveNum() < maxNodes {
+		log.Print("waiting for alive peers, now ", AliveNum())
 		time.Sleep(5 * time.Second)
 	}
 	log.Print("start to get header")
 	goGetHeader()
 	log.Print("start to get txs")
-	gosaveMerkleInfo()
-	getMerkle()
+	goGetMerkle()
 }
 
-//Alives returns num of alive peers.
-func Alives() int {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	return len(alive)
+//BlockSynced returns true is block is fully synced.
+func BlockSynced() bool {
+	bs := block.Lastblocks()
+	return blockSynced(bs)
 }
 
-func isFinished(bs []*block.Block) bool {
+func blockSynced(bs []*block.Block) bool {
 	if len(bs) != 1 {
 		return false
 	}
@@ -201,23 +199,29 @@ func isFinished(bs []*block.Block) bool {
 	return true
 }
 
+func addBlockHash() {
+	bs := block.Lastblocks()
+	log.Println("last confirmed block ", bs[0].Height)
+	if blockSynced(bs) {
+		synced = true
+		log.Print("finished syncing header.")
+		time.Sleep(5 * time.Minute)
+	}
+	for _, b := range bs {
+		hashes <- b.Hash
+	}
+}
+
 //goGetHeader is goroutine which gets header continually.
 func goGetHeader() {
 	go func() {
+		t := time.NewTimer(10 * time.Second)
 		for {
-			bs := block.Lastblocks()
-			log.Println("last confirmed block ", bs[0].Height)
-			if isFinished(bs) {
-				synced = true
-				log.Print("finished syncing header.")
-				time.Sleep(5 * time.Minute)
-			}
-			for _, b := range bs {
-				hashes <- b.Hash
-			}
-			t := time.NewTimer(10 * time.Second)
+			addBlockHash()
 		loop:
 			for {
+				t.Stop()
+				t.Reset(10 * time.Second)
 				select {
 				case hash := <-hashes:
 					log.Print("getting headers from ", behex.EncodeToString(hash))
@@ -247,111 +251,95 @@ func goGetHeader() {
 				case <-t.C:
 					break loop
 				}
-				if !t.Stop() {
-					<-t.C
-				}
-				t.Reset(10 * time.Second)
+
 			}
 		}
 	}()
 }
 
 var (
-	txhashes = make(chan [][]byte)
+	txhashes = make(chan [][]byte, maxNodes*10)
+	gotTX    = make(chan uint64, maxNodes*10)
+	finished block.UInt64Slice
 )
 
 const size uint64 = 500
 
-func getMerkle() {
-	goGetMerkle()
-	go func() {
-		for {
-			var lastheight uint64
-			err := db.DB.View(func(tx *bolt.Tx) error {
-				_, err := db.Get(tx, "status", []byte("lastmerkle"), &lastheight)
-				return err
-			})
-			if err != nil {
-				log.Print(err)
-				time.Sleep(time.Minute)
-				break
-			}
-			for height := lastheight; ; height += size {
-				hs, err := block.GetHashes(height, size)
-				if err != nil || len(hs) == 0 {
-					log.Print(err, len(hs))
-					time.Sleep(15 * time.Minute)
-					break
-				}
-				txhashes <- hs
-			}
+func sendMerkles() {
+	mutex.Lock()
+	defer mutex.Unlock()
+	sort.Sort(finished)
+	var lastheight uint64
+	err := db.DB.View(func(tx *bolt.Tx) error {
+		_, err := db.Get(tx, "status", []byte("lastmerkle"), &lastheight)
+		return err
+	})
+	if err != nil {
+		log.Print("no lastmerkle")
+		return
+	}
+	i := 0
+	for i = 0; i < len(finished); i++ {
+		if finished[i] <= lastheight {
+			continue
 		}
-	}()
-}
-
-func goGetMerkle() {
-	go func() {
-		for hashes := range txhashes {
-			log.Print("getting txs from ", behex.EncodeToString(hashes[0]))
-			po := makeInv(msg.MsgFilterdBlock, hashes)
-			cmd := &writeCmd{
-				cmd:  "getdata",
-				data: po,
-				err:  make(chan error),
-			}
-			wch <- cmd
-			if err := <-cmd.err; err != nil {
-				txhashes <- hashes
-				log.Print(err)
-				return
-			}
+		if lastheight+1 < finished[i] {
+			break
 		}
-	}()
-}
-
-func gosaveMerkleInfo() {
-	go func() {
-		t := time.NewTimer(30 * time.Second)
-		var finished block.UInt64Slice
-		for {
-			select {
-			case h := <-gotMerkle:
-				b, err := block.LoadBlock(h)
-				if err != nil {
-					log.Print(err)
-					continue
-				}
-				finished = append(finished, b.Height)
-			case <-t.C:
-				if len(finished) > 0 {
-					sort.Sort(finished)
-					var i int
-					for i = 0; i < len(finished)-1; i++ {
-						if finished[i]+1 < finished[i+1] {
-							break
-						}
-					}
-					err := db.Batch("status", []byte("lastmerkle"), finished[i])
-					if err != nil {
-						log.Fatal(err)
-					}
-					log.Println("saved ", finished[i])
-					if len(finished) > i {
-						copy(finished[0:], finished[i+1:])
-						finished = finished[:len(finished)-i]
-					}
-				}
-				t.Stop()
-				t.Reset(30 * time.Second)
-			}
-		}
-	}()
-}
-
-//ResetTx resets synced height of tx to 0
-func ResetTx() {
-	err := db.Batch("status", []byte("lastmerkle"), uint64(0))
+		lastheight++
+	}
+	err = db.Batch("status", []byte("lastmerkle"), lastheight)
 	if err != nil {
 		log.Fatal(err)
 	}
+	copy(finished[0:], finished[i:])
+	finished = finished[:len(finished)-i]
+	log.Print("saved ", lastheight, len(finished))
+	if len(finished) > 0 {
+		log.Print("next", finished[0])
+	}
+	var n uint64
+	for n = 0; n < maxNodes; n++ {
+		hs, err := block.GetHashes(lastheight+1+n*size, size)
+		if err != nil && len(hs) == 0 {
+			log.Print(err, len(hs))
+			log.Print("tx is synced")
+			time.Sleep(5 * time.Minute)
+			continue
+		}
+		txhashes <- hs
+		if len(finished) > 1 && finished[0] < uint64(maxNodes)*size {
+			return
+		}
+	}
+	log.Print("sended txs requests")
+}
+
+func goGetMerkle() {
+	t := time.NewTimer(10 * time.Second)
+	go func() {
+		for {
+			t.Stop()
+			t.Reset(10 * time.Second)
+			select {
+			case hashes := <-txhashes:
+				log.Print("getting txs from ", behex.EncodeToString(hashes[0]))
+				po := makeInv(msg.MsgFilterdBlock, hashes)
+				cmd := &writeCmd{
+					cmd:  "getdata",
+					data: po,
+					err:  make(chan error),
+				}
+				wch <- cmd
+				if err := <-cmd.err; err != nil {
+					txhashes <- hashes
+					log.Print(err)
+				}
+			case h := <-gotTX:
+				finished = append(finished, h)
+			case <-t.C:
+				sendMerkles()
+			}
+		}
+	}()
 }
