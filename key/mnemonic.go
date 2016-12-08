@@ -26,18 +26,36 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package params
+package key
 
-const (
-	//Version is the version of this program.
-	Version = "0.0.0"
-	//MainNet represents mainnet.
-	MainNet = "main"
-	//TestNet represents testnet.
-	TestNet = "test"
+import (
+	"crypto/sha512"
 
-	//UserAgent is the user agent.
-	UserAgent = "/monarj:" + Version + "/"
-	//Unit is base unit.
-	Unit = 100000000
+	"crypto/sha256"
+
+	"golang.org/x/crypto/pbkdf2"
 )
+
+func MnemonicToSeed(mnemonic, password string) []byte {
+	salt := []byte("mnemonic")
+	salt = append(salt, []byte(password)...)
+	return pbkdf2.Key([]byte(mnemonic), salt, 2048, 64, sha512.New)
+}
+
+func lpad(str, padstr string, length int) string {
+	for len(str) < length {
+		str = padstr + str
+	}
+	return str
+}
+
+func bytesToBinary(bytes []byte) string{
+    
+}
+
+func checksumBits(entropy []byte) []byte {
+	hash := sha256.Sum256(entropy)
+	ent := len(entropy) * 8
+	cs := ent / 32
+
+}

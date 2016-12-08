@@ -1,14 +1,11 @@
-package base58check
+package base58
 
 import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"math/big"
-
 	"fmt"
-
-	"github.com/monarj/wallet/base58check/base58"
+	"math/big"
 )
 
 //Encode encodes byteData to base58.

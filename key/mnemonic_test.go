@@ -26,18 +26,23 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-package params
+package key
 
-const (
-	//Version is the version of this program.
-	Version = "0.0.0"
-	//MainNet represents mainnet.
-	MainNet = "main"
-	//TestNet represents testnet.
-	TestNet = "test"
-
-	//UserAgent is the user agent.
-	UserAgent = "/monarj:" + Version + "/"
-	//Unit is base unit.
-	Unit = 100000000
+import (
+	"bytes"
+	"encoding/hex"
+	"testing"
 )
+
+func TestMne(t *testing.T) {
+	mne := "basket actual"
+	sresult := "5cf2d4a8b0355e90295bdfc565a022a409af063d5365bb57bf74d9528f494bfa4400f53d8349b80fdae44082d7f9541e1dba2b003bcfec9d0d53781ca676651f"
+	result, err := hex.DecodeString(sresult)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if seed := MnemonicToSeed(mne, ""); !bytes.Equal(result, seed) {
+		t.Error("seed unmatch", hex.EncodeToString(seed))
+	}
+}

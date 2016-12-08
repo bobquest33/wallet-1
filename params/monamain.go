@@ -31,10 +31,21 @@ package params
 import (
 	"log"
 
+	"golang.org/x/crypto/scrypt"
+
 	"github.com/monarj/wallet/behex"
+	"github.com/monarj/wallet/lyra2re2"
 )
 
 const (
+	//ProtocolVersion is the version which this program supports.
+	ProtocolVersion uint32 = 70003
+
+	//Nconfirmed is the block height block is regarded as confirmed.
+	Nconfirmed uint64 = 5
+	//Fee for a transaction
+	Fee = uint64(0.001 * Unit) //  1m MONA/kB
+
 	//DumpedPrivateKeyHeader is the first byte of a base58 encoded dumped private key.
 	DumpedPrivateKeyHeader byte = 178 //This is always addressHeader + 128
 	//DumpedPrivateKeyHeaderAlt  is another first byte of a base58 encoded dumped private key.
@@ -67,6 +78,24 @@ var (
 		"dnsseed.monacoin.org",
 		"dnsseed-multimona-test.tk",
 		"seed.givememona.tk",
+	}
+	HDPrivateKeyID = []byte{0x04, 0x88, 0xad, 0xe4} // starts with xprv
+	HDPublicKeyID  = []byte{0x04, 0x88, 0xb2, 0x1e} // starts with xpub
+
+	//PoWFunc is a func to calculate PoW.
+	PoWFunc = func(height uint64, data []byte) []byte {
+		if height >= 450000 {
+			converted, err := lyra2re2.Sum(data)
+			if err != nil {
+				log.Fatal(err)
+			}
+			return converted
+		}
+		converted, err := scrypt.Key(data, data, 1024, 1, 1, 32)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return converted
 	}
 )
 
